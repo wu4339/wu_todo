@@ -226,6 +226,63 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun sectionColorPrefsKey(uri: Uri, title: String) = "sec_color_${uri}_$title"
 
+    /** 删除整个看板列并写回 .md，同时清理该列的置顶与颜色记录 */
+    fun deleteSection(section: KanbanSection) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+
+        val newLines = KanbanParser.deleteSection(cur.lines, section.headerLineIndex)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+
+        val key = pinnedPrefsKey(uri)
+        val saved = prefs.getStringSet(key, null)
+        var pinned = cur.pinnedTitles
+        if (saved != null && section.title in saved) {
+            val newSet = saved.toMutableSet()
+            newSet.remove(section.title)
+            prefs.edit().putStringSet(key, HashSet(newSet)).apply()
+            pinned = newSet.toSet()
+        }
+        prefs.edit().remove(sectionColorPrefsKey(uri, section.title)).apply()
+        update {
+            copy(
+                lines = newLines,
+                sections = board.sections,
+                pinnedTitles = pinned,
+                sectionColors = sectionColors - section.title
+            )
+        }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
+    /** 列内全部任务标记为完成/未完成并写回 .md */
+    fun setAllTasks(section: KanbanSection, done: Boolean) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+
+        val newLines = KanbanParser.setAllTasksDone(cur.lines, section.headerLineIndex, done)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
+    /** 删除列内全部已完成任务并写回 .md */
+    fun deleteCompletedTasks(section: KanbanSection) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+
+        val newLines = KanbanParser.deleteCompletedTasks(cur.lines, section.headerLineIndex)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
     private fun loadSectionColors(uri: Uri): Map<String, Int> {
         val prefix = "sec_color_${uri}_"
         return prefs.all.mapNotNull { (k, v) ->

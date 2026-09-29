@@ -248,12 +248,67 @@ object KanbanParser {
         var i = lines.size - 1
         while (i >= 0 && lines[i].trim().isEmpty()) i-- // 跳过末尾空行
         if (i >= 0 && lines[i].trim() == "%%") {
-            // 文件尾部有 %% kanban:settings 块：找到它的起始 %% 行，新列插在其前
+            i-- // 先跳过设置块的结束 %% 标记，再往前找起始 %% 行
             while (i >= 0 && !lines[i].trim().startsWith("%%")) i--
             insertAt = if (i >= 0) i else lines.size
         }
         val result = ArrayList(lines)
         result.addAll(insertAt, listOf("", "## ${title.trim()}"))
+        return result
+    }
+
+    /** 删除整列（列头行与该列全部内容），返回新的行集合 */
+    fun deleteSection(lines: List<String>, headerLineIndex: Int): List<String> {
+        if (headerLineIndex !in lines.indices) return lines
+        var contentEnd = headerLineIndex
+        var i = headerLineIndex + 1
+        while (i < lines.size) {
+            val t = lines[i].trim()
+            if (SECTION_RE.find(t) != null || t.startsWith("%%")) break
+            if (t.isNotEmpty()) contentEnd = i
+            i++
+        }
+        val result = ArrayList(lines)
+        if (contentEnd + 1 > headerLineIndex) result.subList(headerLineIndex, contentEnd + 1).clear()
+        return result
+    }
+
+    /** 把列内全部任务标记为完成/未完成，返回新的行集合 */
+    fun setAllTasksDone(lines: List<String>, headerLineIndex: Int, done: Boolean): List<String> {
+        val target = if (done) "x" else " "
+        val result = ArrayList(lines)
+        var i = headerLineIndex + 1
+        while (i < lines.size) {
+            val t = lines[i].trim()
+            if (SECTION_RE.find(t) != null || t.startsWith("%%")) break
+            val m = TASK_RE.find(lines[i])
+            if (m != null) {
+                val g = m.groups[3]!!
+                val cur = if (g.value.equals("x", ignoreCase = true)) "x" else " "
+                if (cur != target) {
+                    result[i] = lines[i].substring(0, g.range.first) + target +
+                        lines[i].substring(g.range.last + 1)
+                }
+            }
+            i++
+        }
+        return result
+    }
+
+    /** 删除列内全部已完成任务行，返回新的行集合 */
+    fun deleteCompletedTasks(lines: List<String>, headerLineIndex: Int): List<String> {
+        val toRemove = mutableListOf<Int>()
+        var i = headerLineIndex + 1
+        while (i < lines.size) {
+            val t = lines[i].trim()
+            if (SECTION_RE.find(t) != null || t.startsWith("%%")) break
+            val m = TASK_RE.find(lines[i])
+            if (m != null && m.groups[3]!!.value.equals("x", ignoreCase = true)) toRemove.add(i)
+            i++
+        }
+        if (toRemove.isEmpty()) return lines
+        val result = ArrayList(lines)
+        for (idx in toRemove.asReversed()) result.removeAt(idx)
         return result
     }
 

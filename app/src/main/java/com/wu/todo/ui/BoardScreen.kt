@@ -44,8 +44,11 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AddCircle
+import androidx.compose.material.icons.outlined.Cancel
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -157,6 +160,9 @@ fun BoardScreen(
             onRenameTask = viewModel::renameTask,
             onMoveTask = { task, target -> viewModel.moveTask(task, target, openedSection) },
             onAddSubtask = viewModel::addSubtask,
+            onDeleteList = { viewModel.deleteSection(openedSection) },
+            onSetAllDone = { done -> viewModel.setAllTasks(openedSection, done) },
+            onDeleteCompleted = { viewModel.deleteCompletedTasks(openedSection) },
             onRefresh = viewModel::reload
         )
         return
@@ -358,6 +364,9 @@ private fun SectionDetailScreen(
     onRenameTask: (KanbanTask, String) -> Unit,
     onMoveTask: (KanbanTask, KanbanSection) -> Unit,
     onAddSubtask: (KanbanTask, String) -> Unit,
+    onDeleteList: () -> Unit,
+    onSetAllDone: (Boolean) -> Unit,
+    onDeleteCompleted: () -> Unit,
     onRefresh: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -424,13 +433,95 @@ private fun SectionDetailScreen(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false }
                     ) {
-                        DropdownMenuItem(
-                            text = { Text("刷新") },
-                            onClick = { menuExpanded = false; onRefresh() }
+                        // List 分组
+                        Text(
+                            "List",
+                            fontSize = 12.sp,
+                            color = WuSubtle,
+                            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
                         )
                         DropdownMenuItem(
-                            text = { Text("返回看板") },
-                            onClick = { menuExpanded = false; onBack() }
+                            text = { Text("Edit list", color = WuTitle) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Edit,
+                                    contentDescription = null,
+                                    tint = WuTitle,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                titleDraft = section.title
+                                editingTitle = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete List", color = WuTitle) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = null,
+                                    tint = WuTitle,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onDeleteList()
+                            }
+                        )
+                        // Task 分组
+                        Text(
+                            "Task",
+                            fontSize = 12.sp,
+                            color = WuSubtle,
+                            modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Incomplete all tasks", color = WuTitle) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.RadioButtonUnchecked,
+                                    contentDescription = null,
+                                    tint = WuTitle,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onSetAllDone(false)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Complete all tasks", color = WuTitle) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.CheckCircle,
+                                    contentDescription = null,
+                                    tint = WuTitle,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onSetAllDone(true)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete all completed tasks", color = WuTitle) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.Cancel,
+                                    contentDescription = null,
+                                    tint = WuTitle,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onDeleteCompleted()
+                            }
                         )
                     }
                 }
@@ -1240,7 +1331,7 @@ private fun AddListSheet(
                     modifier = Modifier
                         .size(24.dp)
                         .clip(CircleShape)
-                        .background(Color(ListPalette[colorIdx]))
+                        .background(Color(ListPalette[colorIdx].toInt()))
                         .clickable { colorIdx = (colorIdx + 1) % ListPalette.size }
                 )
                 Spacer(Modifier.weight(1f))
