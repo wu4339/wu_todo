@@ -241,6 +241,22 @@ object KanbanParser {
         return result
     }
 
+    /** 在文件末尾追加一个新看板列（Obsidian 设置注释块之前），返回新的行集合 */
+    fun addSection(lines: List<String>, title: String): List<String> {
+        if (title.isBlank()) return lines
+        var insertAt = lines.size
+        var i = lines.size - 1
+        while (i >= 0 && lines[i].trim().isEmpty()) i-- // 跳过末尾空行
+        if (i >= 0 && lines[i].trim() == "%%") {
+            // 文件尾部有 %% kanban:settings 块：找到它的起始 %% 行，新列插在其前
+            while (i >= 0 && !lines[i].trim().startsWith("%%")) i--
+            insertAt = if (i >= 0) i else lines.size
+        }
+        val result = ArrayList(lines)
+        result.addAll(insertAt, listOf("", "## ${title.trim()}"))
+        return result
+    }
+
     /** 删除某条任务所在的行（仅当该行仍是任务行时才删），返回新的行集合 */
     fun removeTask(lines: List<String>, task: KanbanTask): List<String> {
         val idx = task.lineIndex

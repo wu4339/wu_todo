@@ -27,6 +27,8 @@ data class BoardUiState(
     val readOnly: Boolean = false,
     /** 已置顶（pin）的看板列标题集合，按文件 uri 持久化在本地 */
     val pinnedTitles: Set<String> = emptySet(),
+    /** 列标题 → 圆点颜色（ARGB Int），仅存本地 */
+    val sectionColors: Map<String, Int> = emptyMap(),
     /** 左侧栏展示的文件夹内所有 .md 文件 */
     val drawerFiles: List<FolderFile> = emptyList()
 ) {
@@ -200,6 +202,37 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /** 新建看板列：写回 .md，并把圆点颜色记在本地 */
+    fun addSection(title: String, colorArgb: Int) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
+
+        val newLines = KanbanParser.addSection(cur.lines, trimmed)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        prefs.edit().putInt(sectionColorPrefsKey(uri, trimmed), colorArgb).apply()
+        update {
+            copy(
+                lines = newLines,
+                sections = board.sections,
+                sectionColors = sectionColors + (trimmed to colorArgb)
+            )
+        }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
+    private fun sectionColorPrefsKey(uri: Uri, title: String) = "sec_color_${uri}_$title"
+
+    private fun loadSectionColors(uri: Uri): Map<String, Int> {
+        val prefix = "sec_color_${uri}_"
+        return prefs.all.mapNotNull { (k, v) ->
+            if (k.startsWith(prefix) && v is Int) k.removePrefix(prefix) to v else null
+        }.toMap()
+    }
+
     fun consumeMessage() = update { copy(message = null) }
 
     private fun loadFrom(uri: Uri) {
@@ -211,6 +244,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         }.onSuccess { (board, u) ->
             prefs.edit().putString("last_uri", u.toString()).apply()
             val pinned = prefs.getStringSet(pinnedPrefsKey(u), emptySet())?.toSet() ?: emptySet()
+            val colors = loadSectionColors(u)
             update {
                 copy(
                     loading = false,
@@ -220,6 +254,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
                     lines = board.lines,
                     lineSeparator = board.lineSeparator,
                     pinnedTitles = pinned,
+                    sectionColors = colors,
                     error = null
                 )
             }

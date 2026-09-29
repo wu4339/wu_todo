@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AddCircle
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -84,6 +85,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -124,6 +126,8 @@ fun BoardScreen(
     // 左侧栏（文件抽屉）
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    // 新建任务列表的底部编辑页
+    var showListSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -142,6 +146,7 @@ fun BoardScreen(
             section = openedSection,
             sections = state.sections,
             pinned = openedSection.title in state.pinnedTitles,
+            dotColor = Color(state.sectionColors[openedSection.title] ?: WuAccent.toArgb()),
             snackbarHostState = snackbarHostState,
             onBack = { openedSectionKey = null },
             onToggle = viewModel::toggle,
@@ -241,7 +246,20 @@ fun BoardScreen(
                 }
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showListSheet = true },
+                containerColor = WuFab,
+                contentColor = WuTitle
+            ) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = "新建任务列表",
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        }
     ) { innerPadding ->
 
         when {
@@ -285,6 +303,7 @@ fun BoardScreen(
                         items(pinnedSections, key = { "p_${it.uniqueKey()}" }) { section ->
                             SectionCard(
                                 section = section,
+                                dotColor = Color(state.sectionColors[section.title] ?: WuAccent.toArgb()),
                                 onToggle = viewModel::toggle,
                                 onOpen = { openedSectionKey = section.uniqueKey() }
                             )
@@ -302,6 +321,7 @@ fun BoardScreen(
                     items(normalSections, key = { it.uniqueKey() }) { section ->
                         SectionCard(
                             section = section,
+                            dotColor = Color(state.sectionColors[section.title] ?: WuAccent.toArgb()),
                             onToggle = viewModel::toggle,
                             onOpen = { openedSectionKey = section.uniqueKey() }
                         )
@@ -311,6 +331,14 @@ fun BoardScreen(
         }
     }
     }
+
+    // 底部弹出：新建任务列表
+    if (showListSheet) {
+        AddListSheet(
+            onDismiss = { showListSheet = false },
+            onCreate = { name, colorArgb -> viewModel.addSection(name, colorArgb) }
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -319,6 +347,7 @@ private fun SectionDetailScreen(
     section: KanbanSection,
     sections: List<KanbanSection>,
     pinned: Boolean,
+    dotColor: Color,
     snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
     onToggle: (KanbanTask) -> Unit,
@@ -476,7 +505,7 @@ private fun SectionDetailScreen(
                         modifier = Modifier
                             .size(20.dp)
                             .clip(CircleShape)
-                            .background(WuAccent)
+                            .background(dotColor)
                     )
                     Spacer(Modifier.width(16.dp))
                     Text(
@@ -898,7 +927,7 @@ private fun CompletedTaskRow(
 private fun BigCheckCircle(done: Boolean) {
     Box(
         modifier = Modifier
-            .size(24.dp)
+            .size(22.dp)
             .clip(CircleShape)
             .then(
                 if (done) Modifier.background(WuAccent)
@@ -911,7 +940,7 @@ private fun BigCheckCircle(done: Boolean) {
                 imageVector = Icons.Filled.Check,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(14.dp)
             )
         }
     }
@@ -945,6 +974,7 @@ private fun PinnedHeader() {
 @Composable
 private fun SectionCard(
     section: KanbanSection,
+    dotColor: Color,
     onToggle: (KanbanTask) -> Unit,
     onOpen: () -> Unit
 ) {
@@ -961,7 +991,7 @@ private fun SectionCard(
                     modifier = Modifier
                         .size(13.dp)
                         .clip(CircleShape)
-                        .background(WuAccent)
+                        .background(dotColor)
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
@@ -998,7 +1028,7 @@ private fun TaskRow(
             .clickable { onOpen() }
             .padding(start = (task.indent * 10).dp, top = 5.dp, bottom = 5.dp)
     ) {
-        CheckCircle(done = task.done, size = 18.dp, onClick = { onToggle(task) })
+        CheckCircle(done = task.done, size = 16.dp, onClick = { onToggle(task) })
         Spacer(Modifier.width(12.dp))
         Text(
             text = task.text,
@@ -1015,7 +1045,7 @@ private fun TaskRow(
 @Composable
 private fun CheckCircle(
     done: Boolean,
-    size: Dp = 22.dp,
+    size: Dp = 20.dp,
     onClick: (() -> Unit)? = null
 ) {
     Box(
@@ -1140,6 +1170,101 @@ private fun BoardDrawerContent(
                 Spacer(Modifier.width(8.dp))
                 Text("选择看板文件夹", fontSize = 13.sp, color = WuSubtle)
             }
+        }
+    }
+}
+
+/** 可选的列圆点颜色（调色板循环切换） */
+private val ListPalette = listOf(
+    0xFFF2645A, 0xFFF59E42, 0xFFF6C344, 0xFF4CAF50,
+    0xFF42A5F5, 0xFF9C6ADE, 0xFF8A8A8A
+)
+
+/** 底部弹出：新建任务列表（输入名称 + 调色板选圆点颜色） */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddListSheet(
+    onDismiss: () -> Unit,
+    onCreate: (String, Int) -> Unit
+) {
+    var title by remember { mutableStateOf("") }
+    var colorIdx by remember { mutableStateOf(0) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = WuCard
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.6f)
+                .padding(horizontal = 20.dp)
+        ) {
+            // 列表名称输入
+            TextField(
+                value = title,
+                onValueChange = { title = it },
+                placeholder = { Text("List name", color = WuSubtle, fontSize = 22.sp) },
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WuTitle
+                ),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = WuAccent
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            // 调色板：点击换色，圆点显示当前颜色
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 12.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Palette,
+                    contentDescription = "切换颜色",
+                    tint = WuSubtle,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .clickable { colorIdx = (colorIdx + 1) % ListPalette.size }
+                )
+                Spacer(Modifier.width(18.dp))
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(Color(ListPalette[colorIdx]))
+                        .clickable { colorIdx = (colorIdx + 1) % ListPalette.size }
+                )
+                Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.weight(1f))
+            // 右下角黄色对勾：保存
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FloatingActionButton(
+                    onClick = {
+                        if (title.isNotBlank()) {
+                            onCreate(title.trim(), ListPalette[colorIdx].toInt())
+                        }
+                        onDismiss()
+                    },
+                    containerColor = WuFab,
+                    contentColor = WuTitle
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = "创建列表")
+                }
+            }
+            Spacer(Modifier.height(14.dp))
         }
     }
 }
