@@ -1,5 +1,6 @@
 package com.wu.todo.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -286,6 +288,16 @@ private fun SectionDetailScreen(
     var editingTitle by remember(section.uniqueKey()) { mutableStateOf(false) }
     var titleDraft by remember(section.uniqueKey()) { mutableStateOf(section.title) }
 
+    // 系统返回键/手势：回到看板主界面（编辑标题时先退出编辑）
+    BackHandler {
+        if (editingTitle) {
+            editingTitle = false
+            titleDraft = section.title
+        } else {
+            onBack()
+        }
+    }
+
     val activeTasks = section.tasks.filter { !it.done }
     val doneTasks = section.tasks.filter { it.done }
 
@@ -300,7 +312,7 @@ private fun SectionDetailScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.Menu, contentDescription = "返回看板")
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "返回看板")
                     }
                 },
                 title = {},
@@ -362,7 +374,7 @@ private fun SectionDetailScreen(
                         onValueChange = { titleDraft = it },
                         singleLine = true,
                         textStyle = TextStyle(
-                            fontSize = 18.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = WuTitle
                         ),
@@ -402,10 +414,10 @@ private fun SectionDetailScreen(
                     Spacer(Modifier.width(16.dp))
                     Text(
                         text = section.title,
-                        fontSize = 28.sp,
+                        fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
                         color = WuTitle,
-                        lineHeight = 34.sp,
+                        lineHeight = 32.sp,
                         modifier = Modifier.weight(1f)
                     )
                     Icon(

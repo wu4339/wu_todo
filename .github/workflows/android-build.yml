@@ -90,15 +90,14 @@ jobs:
           echo "SIGNING_KEY_ALIAS=$SIGNING_KEY_ALIAS" >> "$GITHUB_ENV"
           echo "SIGNING_KEY_PASSWORD=$SIGNING_KEY_PASSWORD" >> "$GITHUB_ENV"
 
-      - name: Build APKs (debug + release)
-        run: ./gradlew assembleDebug assembleRelease --no-daemon -Pwu.versionName=${{ steps.ver.outputs.version }} -Pwu.versionCode=${{ steps.ver.outputs.code }}
+      - name: Build signed release APK
+        run: ./gradlew assembleRelease --no-daemon -Pwu.versionName=${{ steps.ver.outputs.version }} -Pwu.versionCode=${{ steps.ver.outputs.code }}
 
       # 产物文件名带上版本号
-      - name: Rename APKs with version
+      - name: Rename APK with version
         run: |
           V="${{ steps.ver.outputs.version }}"
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk "out/wu_todo-${V}-debug.apk"
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
             cp app/build/outputs/apk/release/app-release.apk "out/wu_todo-${V}-release.apk"
           elif [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
@@ -122,7 +121,7 @@ jobs:
             **wu_todo v${{ steps.ver.outputs.version }}**
             - 支持点击看板列卡片，打开该列详情页
             - 详情页可勾选任务并写回 .md
-            - 自动构建：debug + 已签名 release（可直接安装）
+            - 自动构建：已签名 release（可直接安装）
           files: out/*.apk
           generate_release_notes: true
           fail_on_unmatched_files: false
