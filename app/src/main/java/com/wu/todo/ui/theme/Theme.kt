@@ -14,6 +14,8 @@ val WuTitle = Color(0xFF3A3A3A)        // 列标题文字
 val WuTaskText = Color(0xFFA6A6A6)     // 任务文字（灰）
 val WuCircleStroke = Color(0xFFBBBBBB) // 未勾选圆圈描边
 val WuSubtle = Color(0xFF8A8A8A)       // 次要文字
+val WuDoneGrey = Color(0xFFB4B4B4)     // 已完成任务的图标/文字（浅灰）
+val WuDivider = Color(0xFFE2E2E2)      // 分隔线
 
 private val LightScheme = lightColorScheme(
     background = WuBackground,

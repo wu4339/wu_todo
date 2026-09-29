@@ -85,7 +85,23 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         update { copy(lines = newLines, sections = board.sections) }
 
         if (cur.readOnly) return
-        runCatching { repo.writeText(uri, newLines.joinToString(cur.lineSeparator)) }
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
+    /** 删除某条任务（从 .md 中移除对应行） */
+    fun delete(task: KanbanTask) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        val newLines = KanbanParser.removeTask(cur.lines, task)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
+    private fun persist(uri: Uri, text: String) {
+        runCatching { repo.writeText(uri, text) }
             .onFailure { update { copy(readOnly = true, message = "保存失败，已切换为只读模式") } }
     }
 

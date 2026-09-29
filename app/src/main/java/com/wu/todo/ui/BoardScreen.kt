@@ -1,5 +1,7 @@
 package com.wu.todo.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,7 +25,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
@@ -36,6 +40,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -55,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -67,6 +73,8 @@ import com.wu.todo.ui.theme.WuAccent
 import com.wu.todo.ui.theme.WuBackground
 import com.wu.todo.ui.theme.WuCard
 import com.wu.todo.ui.theme.WuCircleStroke
+import com.wu.todo.ui.theme.WuDivider
+import com.wu.todo.ui.theme.WuDoneGrey
 import com.wu.todo.ui.theme.WuSubtle
 import com.wu.todo.ui.theme.WuTaskText
 import com.wu.todo.ui.theme.WuTitle
@@ -105,6 +113,7 @@ fun BoardScreen(
             snackbarHostState = snackbarHostState,
             onBack = { openedSectionKey = null },
             onToggle = viewModel::toggle,
+            onDelete = viewModel::delete,
             onRefresh = viewModel::reload
         )
         return
@@ -123,7 +132,7 @@ fun BoardScreen(
                     Column {
                         Text(
                             text = "wu_todo",
-                            fontSize = 18.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = WuAccent
                         )
@@ -135,7 +144,7 @@ fun BoardScreen(
                             }
                             Text(
                                 text = sub,
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 color = WuSubtle,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -191,7 +200,7 @@ fun BoardScreen(
                     Text(
                         text = "这个看板还没有任务",
                         color = WuSubtle,
-                        fontSize = 15.sp
+                        fontSize = 13.sp
                     )
                 }
             }
@@ -234,9 +243,14 @@ private fun SectionDetailScreen(
     snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
     onToggle: (KanbanTask) -> Unit,
+    onDelete: (KanbanTask) -> Unit,
     onRefresh: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var completedExpanded by remember { mutableStateOf(true) }
+
+    val activeTasks = section.tasks.filter { !it.done }
+    val doneTasks = section.tasks.filter { it.done }
 
     Scaffold(
         containerColor = WuBackground,
@@ -290,27 +304,78 @@ private fun SectionDetailScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(22.dp)
+                        .size(20.dp)
                         .clip(CircleShape)
                         .background(WuAccent)
                 )
-                Spacer(Modifier.width(18.dp))
+                Spacer(Modifier.width(16.dp))
                 Text(
                     text = section.title,
-                    fontSize = 38.sp,
+                    fontSize = 32.sp,
                     fontWeight = FontWeight.Bold,
                     color = WuTitle,
-                    lineHeight = 44.sp
+                    lineHeight = 38.sp
                 )
             }
-            Spacer(Modifier.height(26.dp))
-            if (section.tasks.isEmpty()) {
-                Text("（无任务）", color = WuSubtle, fontSize = 16.sp)
+            Spacer(Modifier.height(22.dp))
+
+            // 未完成任务
+            if (activeTasks.isEmpty() && doneTasks.isEmpty()) {
+                Text("（无任务）", color = WuSubtle, fontSize = 14.sp)
             } else {
-                section.tasks.forEach { task ->
+                activeTasks.forEach { task ->
                     DetailTaskRow(task = task, onToggle = onToggle)
                 }
             }
+
+            // 已完成：折叠区
+            if (doneTasks.isNotEmpty()) {
+                Spacer(Modifier.height(18.dp))
+                HorizontalDivider(color = WuDivider, thickness = 1.dp)
+                Spacer(Modifier.height(10.dp))
+
+                val chevronAngle by animateFloatAsState(
+                    targetValue = if (completedExpanded) 0f else -90f,
+                    label = "chevron"
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { completedExpanded = !completedExpanded }
+                        .padding(vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Completed",
+                        fontSize = 15.sp,
+                        color = WuSubtle,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = if (completedExpanded) "折叠已完成" else "展开已完成",
+                        tint = WuSubtle,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .rotate(chevronAngle)
+                    )
+                }
+
+                AnimatedVisibility(visible = completedExpanded) {
+                    Column {
+                        Spacer(Modifier.height(4.dp))
+                        doneTasks.forEach { task ->
+                            CompletedTaskRow(
+                                task = task,
+                                onToggle = onToggle,
+                                onDelete = onDelete
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(40.dp))
         }
     }
@@ -327,16 +392,60 @@ private fun DetailTaskRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onToggle(task) }
-            .padding(start = (task.indent * 10).dp, top = 12.dp, bottom = 12.dp)
+            .padding(start = (task.indent * 10).dp, top = 11.dp, bottom = 11.dp)
     ) {
-        BigCheckCircle(done = task.done)
-        Spacer(Modifier.width(18.dp))
+        BigCheckCircle(done = false)
+        Spacer(Modifier.width(16.dp))
         Text(
             text = task.text,
-            fontSize = 21.sp,
-            color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
-            textDecoration = if (task.done) TextDecoration.LineThrough else null,
-            lineHeight = 28.sp
+            fontSize = 18.sp,
+            color = WuTaskText,
+            lineHeight = 24.sp
+        )
+    }
+}
+
+/** 已完成任务：灰色对勾 + 灰字 + 右侧 ✕ 删除（对勾或文字可取消完成） */
+@Composable
+private fun CompletedTaskRow(
+    task: KanbanTask,
+    onToggle: (KanbanTask) -> Unit,
+    onDelete: (KanbanTask) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .padding(start = (task.indent * 10).dp, top = 8.dp, bottom = 8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Check,
+            contentDescription = "取消完成",
+            tint = WuDoneGrey,
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .clickable { onToggle(task) }
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = task.text,
+            fontSize = 18.sp,
+            color = WuDoneGrey,
+            lineHeight = 24.sp,
+            modifier = Modifier
+                .weight(1f)
+                .clickable { onToggle(task) }
+        )
+        Icon(
+            imageVector = Icons.Filled.Close,
+            contentDescription = "删除任务",
+            tint = WuDoneGrey,
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .clickable { onDelete(task) }
         )
     }
 }
@@ -345,7 +454,7 @@ private fun DetailTaskRow(
 private fun BigCheckCircle(done: Boolean) {
     Box(
         modifier = Modifier
-            .size(26.dp)
+            .size(24.dp)
             .clip(CircleShape)
             .then(
                 if (done) Modifier.background(WuAccent)
@@ -388,14 +497,14 @@ private fun SectionCard(
                 Spacer(Modifier.width(10.dp))
                 Text(
                     text = section.title,
-                    fontSize = 19.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = WuTitle
                 )
             }
             Spacer(Modifier.height(14.dp))
             if (section.tasks.isEmpty()) {
-                Text("（无任务）", color = WuSubtle, fontSize = 13.sp)
+                Text("（无任务）", color = WuSubtle, fontSize = 12.sp)
             } else {
                 section.tasks.forEach { task ->
                     TaskRow(task = task, onToggle = onToggle)
@@ -422,10 +531,10 @@ private fun TaskRow(
         Spacer(Modifier.width(14.dp))
         Text(
             text = task.text,
-            fontSize = 17.sp,
+            fontSize = 15.sp,
             color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
             textDecoration = if (task.done) TextDecoration.LineThrough else null,
-            lineHeight = 22.sp
+            lineHeight = 20.sp
         )
     }
 }
@@ -464,9 +573,9 @@ private fun EmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("wu_todo", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = WuAccent)
+        Text("wu_todo", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = WuAccent)
         Spacer(Modifier.height(10.dp))
-        Text("读取 Obsidian 看板，随手打勾", fontSize = 15.sp, color = WuSubtle)
+        Text("读取 Obsidian 看板，随手打勾", fontSize = 13.sp, color = WuSubtle)
         Spacer(Modifier.height(28.dp))
         Button(onClick = onOpenFile) {
             Icon(Icons.Filled.FolderOpen, contentDescription = null)
@@ -502,7 +611,7 @@ private fun FolderPickerDialog(
                             file.name,
                             modifier = Modifier.fillMaxWidth(),
                             color = WuTitle,
-                            fontSize = 15.sp
+                            fontSize = 13.sp
                         )
                     }
                 }

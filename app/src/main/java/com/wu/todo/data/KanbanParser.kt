@@ -155,6 +155,16 @@ object KanbanParser {
         return result
     }
 
+    /** 删除某条任务所在的行（仅当该行仍是任务行时才删），返回新的行集合 */
+    fun removeTask(lines: List<String>, task: KanbanTask): List<String> {
+        val idx = task.lineIndex
+        if (idx !in lines.indices) return lines
+        if (TASK_RE.find(lines[idx]) == null) return lines
+        val result = ArrayList(lines)
+        result.removeAt(idx)
+        return result
+    }
+
     private class MutableSection(
         var title: String,
         var headerLineIndex: Int
