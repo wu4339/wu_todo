@@ -74,13 +74,16 @@ jobs:
 
       # 从 GitHub Secret 解码签名密钥库（未配置则 release 保持未签名）
       - name: Decode signing keystore
-        if: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
         env:
           SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
+          if [ -z "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "未配置 SIGNING_KEYSTORE_BASE64，release 将保持未签名"
+            exit 0
+          fi
           echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/wu_todo.keystore"
           echo "SIGNING_KEYSTORE=$RUNNER_TEMP/wu_todo.keystore" >> "$GITHUB_ENV"
           echo "SIGNING_STORE_PASSWORD=$SIGNING_STORE_PASSWORD" >> "$GITHUB_ENV"
