@@ -158,6 +158,48 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /** 重命名任务文本并写回 .md */
+    fun renameTask(task: KanbanTask, newText: String) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        if (newText.isBlank() || newText.trim() == task.text) return
+
+        val newLines = KanbanParser.renameTask(cur.lines, task, newText)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
+    /** 把任务移动到目标列末尾并写回 .md（目标列与当前列相同则忽略） */
+    fun moveTask(task: KanbanTask, target: KanbanSection, from: KanbanSection) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        if (target.headerLineIndex == from.headerLineIndex) return
+
+        val newLines = KanbanParser.moveTask(cur.lines, task, target.headerLineIndex)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
+    /** 给任务添加一个缩进子任务并写回 .md */
+    fun addSubtask(task: KanbanTask, text: String) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        if (text.isBlank()) return
+
+        val newLines = KanbanParser.addSubtask(cur.lines, task, text)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
     fun consumeMessage() = update { copy(message = null) }
 
     private fun loadFrom(uri: Uri) {

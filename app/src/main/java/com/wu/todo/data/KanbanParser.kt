@@ -187,6 +187,60 @@ object KanbanParser {
         return result
     }
 
+    /** 重命名任务：仅替换任务行中的文本部分（保留勾选状态、缩进与列表标记） */
+    fun renameTask(lines: List<String>, task: KanbanTask, newText: String): List<String> {
+        val idx = task.lineIndex
+        if (idx !in lines.indices) return lines
+        if (newText.isBlank()) return lines
+        val m = TASK_RE.find(lines[idx]) ?: return lines
+        val g = m.groups[4] ?: return lines
+        if (m.groupValues[4].trim() == newText.trim()) return lines
+        val result = ArrayList(lines)
+        result[idx] = lines[idx].substring(0, g.range.first) + newText.trim() +
+            lines[idx].substring(g.range.last + 1)
+        return result
+    }
+
+    /** 把任务移动到目标列末尾（目标列用列头行号标识，-1 表示未分组），返回新的行集合 */
+    fun moveTask(lines: List<String>, task: KanbanTask, targetHeaderLineIndex: Int): List<String> {
+        val idx = task.lineIndex
+        if (idx !in lines.indices) return lines
+        if (TASK_RE.find(lines[idx]) == null) return lines
+        val movedLine = lines[idx].trimStart() // 移到目标列顶层，去掉原缩进
+
+        val without = ArrayList(lines)
+        without.removeAt(idx)
+        // 删掉一行后，目标列头的行号需要相应前移
+        var header = targetHeaderLineIndex
+        if (header > idx) header -= 1
+        if (header < 0 || header >= without.size) return without
+
+        var lastTask = -1
+        var i = header + 1
+        while (i < without.size) {
+            val t = without[i].trim()
+            if (SECTION_RE.find(t) != null || t.startsWith("%%")) break
+            if (TASK_RE.find(without[i]) != null) lastTask = i
+            i++
+        }
+        val at = if (lastTask >= 0) lastTask + 1 else header + 1
+        val result = ArrayList(without)
+        result.add(at, movedLine)
+        return result
+    }
+
+    /** 在任务行下方插入一个缩进的子任务行，返回新的行集合 */
+    fun addSubtask(lines: List<String>, task: KanbanTask, text: String): List<String> {
+        if (text.isBlank()) return lines
+        val idx = task.lineIndex
+        if (idx !in lines.indices) return lines
+        if (TASK_RE.find(lines[idx]) == null) return lines
+        val indent = lines[idx].takeWhile { it == ' ' || it == '\t' } + "    "
+        val result = ArrayList(lines)
+        result.add(idx + 1, "${indent}- [ ] ${text.trim()}")
+        return result
+    }
+
     /** 删除某条任务所在的行（仅当该行仍是任务行时才删），返回新的行集合 */
     fun removeTask(lines: List<String>, task: KanbanTask): List<String> {
         val idx = task.lineIndex

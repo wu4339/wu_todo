@@ -30,15 +30,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -135,6 +139,7 @@ fun BoardScreen(
     if (openedSection != null) {
         SectionDetailScreen(
             section = openedSection,
+            sections = state.sections,
             pinned = openedSection.title in state.pinnedTitles,
             snackbarHostState = snackbarHostState,
             onBack = { openedSectionKey = null },
@@ -143,6 +148,9 @@ fun BoardScreen(
             onTogglePin = { viewModel.togglePin(openedSection) },
             onRename = { newTitle -> viewModel.renameSection(openedSection, newTitle) },
             onAdd = { text -> viewModel.addTask(openedSection, text) },
+            onRenameTask = viewModel::renameTask,
+            onMoveTask = { task, target -> viewModel.moveTask(task, target, openedSection) },
+            onAddSubtask = viewModel::addSubtask,
             onRefresh = viewModel::reload
         )
         return
@@ -308,6 +316,7 @@ fun BoardScreen(
 @Composable
 private fun SectionDetailScreen(
     section: KanbanSection,
+    sections: List<KanbanSection>,
     pinned: Boolean,
     snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
@@ -316,6 +325,9 @@ private fun SectionDetailScreen(
     onTogglePin: () -> Unit,
     onRename: (String) -> Unit,
     onAdd: (String) -> Unit,
+    onRenameTask: (KanbanTask, String) -> Unit,
+    onMoveTask: (KanbanTask, KanbanSection) -> Unit,
+    onAddSubtask: (KanbanTask, String) -> Unit,
     onRefresh: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -323,6 +335,8 @@ private fun SectionDetailScreen(
     // 底部弹出的添加任务输入
     var showAddSheet by remember { mutableStateOf(false) }
     var newTaskText by remember { mutableStateOf("") }
+    // 当前正在编辑的任务（null 表示未打开编辑页）
+    var editingTask by remember { mutableStateOf<KanbanTask?>(null) }
     // 标题编辑状态
     var editingTitle by remember(section.uniqueKey()) { mutableStateOf(false) }
     var titleDraft by remember(section.uniqueKey()) { mutableStateOf(section.title) }
@@ -487,7 +501,11 @@ private fun SectionDetailScreen(
                 Text("（无任务）", color = WuSubtle, fontSize = 14.sp)
             } else {
                 activeTasks.forEach { task ->
-                    DetailTaskRow(task = task, onToggle = onToggle)
+                    DetailTaskRow(
+                        task = task,
+                        onToggle = onToggle,
+                        onEdit = { editingTask = it }
+                    )
                 }
             }
 
@@ -532,7 +550,8 @@ private fun SectionDetailScreen(
                             CompletedTaskRow(
                                 task = task,
                                 onToggle = onToggle,
-                                onDelete = onDelete
+                                onDelete = onDelete,
+                                onEdit = { editingTask = it }
                             )
                         }
                     }
@@ -594,23 +613,224 @@ private fun SectionDetailScreen(
             Spacer(Modifier.height(18.dp))
         }
     }
+
+    // 底部弹出：任务编辑页（改文本 / 移动到列 / 加子项 / 删除 / 保存）
+    editingTask?.let { t ->
+        TaskEditSheet(
+            task = t,
+            sections = sections,
+            currentSection = section,
+            onDismiss = { editingTask = null },
+            onRenameTask = onRenameTask,
+            onMoveTask = onMoveTask,
+            onAddSubtask = onAddSubtask,
+            onDelete = onDelete
+        )
+    }
 }
 
+/** 底部弹出的任务编辑页 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskEditSheet(
+    task: KanbanTask,
+    sections: List<KanbanSection>,
+    currentSection: KanbanSection,
+    onDismiss: () -> Unit,
+    onRenameTask: (KanbanTask, String) -> Unit,
+    onMoveTask: (KanbanTask, KanbanSection) -> Unit,
+    onAddSubtask: (KanbanTask, String) -> Unit,
+    onDelete: (KanbanTask) -> Unit
+) {
+    var text by remember(task.id) { mutableStateOf(task.text) }
+    var moveMenu by remember { mutableStateOf(false) }
+    var showSubInput by remember { mutableStateOf(false) }
+    var subText by remember { mutableStateOf("") }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = WuCard
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            // 顶部：右上角删除按钮
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                IconButton(onClick = { onDelete(task); onDismiss() }) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "删除任务",
+                        tint = WuSubtle,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+            // 任务文本编辑（大号粗体）
+            TextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = { Text("任务内容", color = WuSubtle, fontSize = 20.sp) },
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WuTitle
+                ),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = WuAccent
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            // 移动到其他列
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 6.dp)
+            ) {
+                Icon(
+                    Icons.Filled.List,
+                    contentDescription = null,
+                    tint = WuSubtle,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(14.dp))
+                Box {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(WuAccent.copy(alpha = 0.12f))
+                            .clickable { moveMenu = true }
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text(currentSection.title, fontSize = 13.sp, color = WuAccent)
+                        Icon(
+                            Icons.Filled.ArrowDropDown,
+                            contentDescription = "选择列",
+                            tint = WuAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = moveMenu,
+                        onDismissRequest = { moveMenu = false }
+                    ) {
+                        sections.forEach { s ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        s.title,
+                                        color = if (s.headerLineIndex == currentSection.headerLineIndex) WuSubtle else WuTitle
+                                    )
+                                },
+                                onClick = {
+                                    moveMenu = false
+                                    onMoveTask(task, s)
+                                    onDismiss()
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            // Add items：添加子任务
+            if (!showSubInput) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { showSubInput = true }
+                        .padding(vertical = 10.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.AddCircle,
+                        contentDescription = null,
+                        tint = WuSubtle,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Text("Add items", fontSize = 15.sp, color = WuSubtle)
+                }
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                ) {
+                    TextField(
+                        value = subText,
+                        onValueChange = { subText = it },
+                        placeholder = { Text("子任务内容", color = WuSubtle, fontSize = 14.sp) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = WuBackground,
+                            unfocusedContainerColor = WuBackground,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = WuAccent
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = {
+                        onAddSubtask(task, subText)
+                        subText = ""
+                        showSubInput = false
+                    }) {
+                        Icon(Icons.Filled.Add, contentDescription = "添加子任务", tint = WuTitle)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            // 右下角黄色对勾：保存文本修改
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FloatingActionButton(
+                    onClick = {
+                        onRenameTask(task, text)
+                        onDismiss()
+                    },
+                    containerColor = WuFab,
+                    contentColor = WuTitle
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = "保存")
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+/** 详情页任务行：点击行=打开底部编辑页；点击圆圈=勾选完成 */
 @Composable
 private fun DetailTaskRow(
     task: KanbanTask,
-    onToggle: (KanbanTask) -> Unit
+    onToggle: (KanbanTask) -> Unit,
+    onEdit: (KanbanTask) -> Unit
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .clickable { onToggle(task) }
+            .clickable { onEdit(task) }
             .padding(start = (task.indent * 10).dp, top = 11.dp, bottom = 11.dp)
     ) {
-        BigCheckCircle(done = false)
-        Spacer(Modifier.width(16.dp))
+        Box(
+            modifier = Modifier
+                .clip(CircleShape)
+                .clickable { onToggle(task) }
+                .padding(2.dp)
+        ) {
+            BigCheckCircle(done = false)
+        }
+        Spacer(Modifier.width(14.dp))
         Text(
             text = task.text,
             fontSize = 18.sp,
@@ -620,12 +840,13 @@ private fun DetailTaskRow(
     }
 }
 
-/** 已完成任务：灰色对勾 + 灰字 + 右侧 ✕ 删除（对勾或文字可取消完成） */
+/** 已完成任务：灰色对勾（点=取消完成）+ 灰字（点=编辑）+ 右侧 ✕ 删除 */
 @Composable
 private fun CompletedTaskRow(
     task: KanbanTask,
     onToggle: (KanbanTask) -> Unit,
-    onDelete: (KanbanTask) -> Unit
+    onDelete: (KanbanTask) -> Unit,
+    onEdit: (KanbanTask) -> Unit
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -651,7 +872,8 @@ private fun CompletedTaskRow(
             lineHeight = 24.sp,
             modifier = Modifier
                 .weight(1f)
-                .clickable { onToggle(task) }
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onEdit(task) }
         )
         Icon(
             imageVector = Icons.Filled.Close,
