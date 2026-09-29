@@ -26,6 +26,16 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 仅在 CI 注入签名环境变量时才签名；本地未配置则保持未签名
+            val ksPath = System.getenv("SIGNING_KEYSTORE")
+            if (!ksPath.isNullOrBlank()) {
+                signingConfig = signingConfigs.create("releaseKey") {
+                    storeFile = file(ksPath)
+                    storePassword = System.getenv("SIGNING_STORE_PASSWORD") ?: ""
+                    keyAlias = System.getenv("SIGNING_KEY_ALIAS") ?: ""
+                    keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: ""
+                }
+            }
         }
     }
 
