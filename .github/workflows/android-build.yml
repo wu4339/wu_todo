@@ -11,6 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,8 +25,29 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # 手动安装 Android SDK（不依赖 setup-android action，可控且稳定）
+      - name: Cache Android SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/android-sdk
+          key: android-sdk-34-${{ runner.os }}
+
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          SDK="$ANDROID_HOME"
+          mkdir -p "$SDK/cmdline-tools"
+          curl -sSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q /tmp/cmdtools.zip -d /tmp/ct
+          rm -rf "$SDK/cmdline-tools/latest"
+          mv /tmp/ct/cmdline-tools "$SDK/cmdline-tools/latest"
+          SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
 
       # 取最近一个 v* 标签作为基线，版本号 +0.0.001（patch 三位补零）
       - name: Compute next version (+0.0.001)
