@@ -155,6 +155,19 @@ object KanbanParser {
         return result
     }
 
+    /** 重命名看板列：替换列头行的标题文本（保留原 # 级别），返回新的行集合 */
+    fun renameSection(lines: List<String>, headerLineIndex: Int, newTitle: String): List<String> {
+        val idx = headerLineIndex
+        if (idx !in lines.indices) return lines
+        val t = lines[idx].trim()
+        val m = SECTION_RE.find(t) ?: return lines
+        if (m.groupValues[1].trim() == newTitle.trim()) return lines
+        val hashes = t.takeWhile { it == '#' }
+        val result = ArrayList(lines)
+        result[idx] = "$hashes $newTitle"
+        return result
+    }
+
     /** 删除某条任务所在的行（仅当该行仍是任务行时才删），返回新的行集合 */
     fun removeTask(lines: List<String>, task: KanbanTask): List<String> {
         val idx = task.lineIndex

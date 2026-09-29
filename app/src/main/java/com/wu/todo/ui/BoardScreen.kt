@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
@@ -26,12 +27,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -44,6 +47,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -62,6 +66,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,8 +84,8 @@ import com.wu.todo.ui.theme.WuSubtle
 import com.wu.todo.ui.theme.WuTaskText
 import com.wu.todo.ui.theme.WuTitle
 
-/** 用「标题 + 列头行号」作为一列的唯一 key，保证刷新后仍能定位到同一列 */
-private fun KanbanSection.uniqueKey() = "$title@$headerLineIndex"
+/** 用「列头行号」作为一列的唯一 key，重命名标题后 key 不变，详情页不会跳回总览 */
+private fun KanbanSection.uniqueKey() = "col@${headerLineIndex}"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,10 +115,13 @@ fun BoardScreen(
     if (openedSection != null) {
         SectionDetailScreen(
             section = openedSection,
+            pinned = openedSection.title in state.pinnedTitles,
             snackbarHostState = snackbarHostState,
             onBack = { openedSectionKey = null },
             onToggle = viewModel::toggle,
             onDelete = viewModel::delete,
+            onTogglePin = { viewModel.togglePin(openedSection) },
+            onRename = { newTitle -> viewModel.renameSection(openedSection, newTitle) },
             onRefresh = viewModel::reload
         )
         return
@@ -205,6 +213,8 @@ fun BoardScreen(
                 }
             }
             else -> {
+                val pinnedSections = state.sections.filter { it.title in state.pinnedTitles }
+                val normalSections = state.sections.filter { it.title !in state.pinnedTitles }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -214,7 +224,28 @@ fun BoardScreen(
                         .fillMaxSize()
                         .padding(12.dp)
                 ) {
-                    items(state.sections, key = { it.uniqueKey() }) { section ->
+                    if (pinnedSections.isNotEmpty()) {
+                        item(key = "pinned_header", span = { GridItemSpan(2) }) {
+                            PinnedHeader()
+                        }
+                        items(pinnedSections, key = { "p_${it.uniqueKey()}" }) { section ->
+                            SectionCard(
+                                section = section,
+                                onToggle = viewModel::toggle,
+                                onOpen = { openedSectionKey = section.uniqueKey() }
+                            )
+                        }
+                        if (normalSections.isNotEmpty()) {
+                            item(key = "pinned_divider", span = { GridItemSpan(2) }) {
+                                HorizontalDivider(
+                                    color = WuDivider,
+                                    thickness = 1.dp,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                    items(normalSections, key = { it.uniqueKey() }) { section ->
                         SectionCard(
                             section = section,
                             onToggle = viewModel::toggle,
@@ -240,14 +271,20 @@ fun BoardScreen(
 @Composable
 private fun SectionDetailScreen(
     section: KanbanSection,
+    pinned: Boolean,
     snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
     onToggle: (KanbanTask) -> Unit,
     onDelete: (KanbanTask) -> Unit,
+    onTogglePin: () -> Unit,
+    onRename: (String) -> Unit,
     onRefresh: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     var completedExpanded by remember { mutableStateOf(true) }
+    // 标题编辑状态
+    var editingTitle by remember(section.uniqueKey()) { mutableStateOf(false) }
+    var titleDraft by remember(section.uniqueKey()) { mutableStateOf(section.title) }
 
     val activeTasks = section.tasks.filter { !it.done }
     val doneTasks = section.tasks.filter { it.done }
@@ -268,8 +305,22 @@ private fun SectionDetailScreen(
                 },
                 title = {},
                 actions = {
-                    IconButton(onClick = { /* 置顶（占位） */ }) {
-                        Icon(Icons.Filled.PushPin, contentDescription = "置顶")
+                    IconButton(onClick = onTogglePin) {
+                        if (pinned) {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                contentDescription = "取消置顶",
+                                tint = WuAccent,
+                                modifier = Modifier.rotate(35f)
+                            )
+                        } else {
+                            Icon(
+                                Icons.Outlined.PushPin,
+                                contentDescription = "置顶",
+                                tint = WuTitle,
+                                modifier = Modifier.rotate(35f)
+                            )
+                        }
                     }
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "更多")
@@ -300,22 +351,70 @@ private fun SectionDetailScreen(
                 .padding(horizontal = 24.dp)
         ) {
             Spacer(Modifier.height(8.dp))
-            // 列标题：红色圆点 + 大号标题
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
+            // 列标题：红色圆点 + 大号标题（点击进入编辑）
+            if (editingTitle) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = titleDraft,
+                        onValueChange = { titleDraft = it },
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = WuTitle
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = {
+                        editingTitle = false
+                        titleDraft = section.title
+                    }) {
+                        Icon(Icons.Filled.Close, contentDescription = "取消编辑", tint = WuSubtle)
+                    }
+                    IconButton(onClick = {
+                        onRename(titleDraft)
+                        editingTitle = false
+                    }) {
+                        Icon(Icons.Filled.Check, contentDescription = "保存标题", tint = WuAccent)
+                    }
+                }
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(WuAccent)
-                )
-                Spacer(Modifier.width(16.dp))
-                Text(
-                    text = section.title,
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = WuTitle,
-                    lineHeight = 38.sp
-                )
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable {
+                            titleDraft = section.title
+                            editingTitle = true
+                        }
+                        .padding(vertical = 4.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(WuAccent)
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        text = section.title,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = WuTitle,
+                        lineHeight = 34.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        Icons.Filled.Edit,
+                        contentDescription = "重命名列标题",
+                        tint = WuSubtle,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
             Spacer(Modifier.height(22.dp))
 
@@ -473,6 +572,31 @@ private fun BigCheckCircle(done: Boolean) {
     }
 }
 
+/** 总览顶部的「PINNED」分组标题：斜置图钉 + 字距拉开的灰字 */
+@Composable
+private fun PinnedHeader() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 2.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.PushPin,
+            contentDescription = null,
+            tint = WuSubtle,
+            modifier = Modifier
+                .size(16.dp)
+                .rotate(-35f)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = "PINNED",
+            fontSize = 13.sp,
+            color = WuSubtle,
+            letterSpacing = 1.5.sp
+        )
+    }
+}
+
 @Composable
 private fun SectionCard(
     section: KanbanSection,
@@ -497,7 +621,7 @@ private fun SectionCard(
                 Spacer(Modifier.width(10.dp))
                 Text(
                     text = section.title,
-                    fontSize = 17.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = WuTitle
                 )

@@ -25,6 +25,8 @@ data class BoardUiState(
     val error: String? = null,
     val message: String? = null,
     val readOnly: Boolean = false,
+    /** 已置顶（pin）的看板列标题集合，按文件 uri 持久化在本地 */
+    val pinnedTitles: Set<String> = emptySet(),
     /** 当从文件夹里选中了多个 .md 文件时，弹出选择列表 */
     val folderChoices: List<FolderFile>? = null
 ) {
@@ -100,6 +102,45 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /** 切换某个看板列的置顶状态（仅存本地，不写回 .md） */
+    fun togglePin(section: KanbanSection) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        val key = pinnedPrefsKey(uri)
+        val newSet = (prefs.getStringSet(key, emptySet()) ?: emptySet()).toMutableSet()
+        if (section.title in newSet) newSet.remove(section.title) else newSet.add(section.title)
+        prefs.edit().putStringSet(key, HashSet(newSet)).apply()
+        update { copy(pinnedTitles = newSet.toSet()) }
+    }
+
+    /** 重命名看板列：修改列头行并写回 .md，同时同步本地置顶记录 */
+    fun renameSection(section: KanbanSection, newTitle: String) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        val trimmed = newTitle.trim()
+        if (trimmed.isEmpty() || trimmed == section.title) return
+
+        val newLines = KanbanParser.renameSection(cur.lines, section.headerLineIndex, trimmed)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        // 同步置顶记录里的旧标题
+        val key = pinnedPrefsKey(uri)
+        val saved = prefs.getStringSet(key, null)
+        if (saved != null && section.title in saved) {
+            val newSet = saved.toMutableSet()
+            newSet.remove(section.title)
+            newSet.add(trimmed)
+            prefs.edit().putStringSet(key, HashSet(newSet)).apply()
+            update { copy(pinnedTitles = newSet.toSet()) }
+        }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
+    private fun pinnedPrefsKey(uri: Uri) = "pinned_$uri"
+
     private fun persist(uri: Uri, text: String) {
         runCatching { repo.writeText(uri, text) }
             .onFailure { update { copy(readOnly = true, message = "保存失败，已切换为只读模式") } }
@@ -116,6 +157,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
             board to uri
         }.onSuccess { (board, u) ->
             prefs.edit().putString("last_uri", u.toString()).apply()
+            val pinned = prefs.getStringSet(pinnedPrefsKey(u), emptySet())?.toSet() ?: emptySet()
             update {
                 copy(
                     loading = false,
@@ -124,6 +166,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
                     sections = board.sections,
                     lines = board.lines,
                     lineSeparator = board.lineSeparator,
+                    pinnedTitles = pinned,
                     error = null
                 )
             }
