@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -440,7 +441,7 @@ private fun SectionDetailScreen(
                         onValueChange = { titleDraft = it },
                         singleLine = true,
                         textStyle = TextStyle(
-                            fontSize = 16.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             color = WuTitle
                         ),
@@ -480,10 +481,10 @@ private fun SectionDetailScreen(
                     Spacer(Modifier.width(16.dp))
                     Text(
                         text = section.title,
-                        fontSize = 26.sp,
+                        fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
                         color = WuTitle,
-                        lineHeight = 32.sp,
+                        lineHeight = 30.sp,
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
@@ -651,7 +652,12 @@ private fun TaskEditSheet(
         onDismissRequest = onDismiss,
         containerColor = WuCard
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.72f)
+                .padding(horizontal = 20.dp)
+        ) {
             // 顶部：右上角删除按钮
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 IconButton(onClick = { onDelete(task); onDismiss() }) {
@@ -786,7 +792,8 @@ private fun TaskEditSheet(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            // 右下角黄色对勾：保存文本修改
+            Spacer(Modifier.weight(1f))
+            // 右下角黄色对勾：保存文本修改（贴底）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
@@ -833,9 +840,9 @@ private fun DetailTaskRow(
         Spacer(Modifier.width(14.dp))
         Text(
             text = task.text,
-            fontSize = 18.sp,
-            color = WuTaskText,
-            lineHeight = 24.sp
+            fontSize = 16.sp,
+            color = WuTitle,
+            lineHeight = 22.sp
         )
     }
 }
@@ -867,9 +874,9 @@ private fun CompletedTaskRow(
         Spacer(Modifier.width(16.dp))
         Text(
             text = task.text,
-            fontSize = 18.sp,
+            fontSize = 16.sp,
             color = WuDoneGrey,
-            lineHeight = 24.sp,
+            lineHeight = 22.sp,
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(8.dp))
@@ -998,7 +1005,9 @@ private fun TaskRow(
             fontSize = 15.sp,
             color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
             textDecoration = if (task.done) TextDecoration.LineThrough else null,
-            lineHeight = 20.sp
+            lineHeight = 20.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
