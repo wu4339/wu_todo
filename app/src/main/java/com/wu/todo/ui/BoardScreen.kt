@@ -17,12 +17,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -67,6 +71,9 @@ import com.wu.todo.ui.theme.WuSubtle
 import com.wu.todo.ui.theme.WuTaskText
 import com.wu.todo.ui.theme.WuTitle
 
+/** 用「标题 + 列头行号」作为一列的唯一 key，保证刷新后仍能定位到同一列 */
+private fun KanbanSection.uniqueKey() = "$title@$headerLineIndex"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BoardScreen(
@@ -77,12 +84,30 @@ fun BoardScreen(
     val state by viewModel.state
     val snackbarHostState = remember { SnackbarHostState() }
     var menuExpanded by remember { mutableStateOf(false) }
+    // 当前打开的看板列（null 表示在看板总览）
+    var openedSectionKey by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state.message) {
         state.message?.let {
             snackbarHostState.showSnackbar(it)
             viewModel.consumeMessage()
         }
+    }
+
+    val openedSection = openedSectionKey?.let { key ->
+        state.sections.firstOrNull { it.uniqueKey() == key }
+    }
+
+    // 点击卡片后进入该列的详情页
+    if (openedSection != null) {
+        SectionDetailScreen(
+            section = openedSection,
+            snackbarHostState = snackbarHostState,
+            onBack = { openedSectionKey = null },
+            onToggle = viewModel::toggle,
+            onRefresh = viewModel::reload
+        )
+        return
     }
 
     Scaffold(
@@ -180,8 +205,12 @@ fun BoardScreen(
                         .fillMaxSize()
                         .padding(12.dp)
                 ) {
-                    items(state.sections, key = { it.title + it.headerLineIndex }) { section ->
-                        SectionCard(section = section, onToggle = viewModel::toggle)
+                    items(state.sections, key = { it.uniqueKey() }) { section ->
+                        SectionCard(
+                            section = section,
+                            onToggle = viewModel::toggle,
+                            onOpen = { openedSectionKey = section.uniqueKey() }
+                        )
                     }
                 }
             }
@@ -198,13 +227,153 @@ fun BoardScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SectionDetailScreen(
+    section: KanbanSection,
+    snackbarHostState: SnackbarHostState,
+    onBack: () -> Unit,
+    onToggle: (KanbanTask) -> Unit,
+    onRefresh: () -> Unit
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    Scaffold(
+        containerColor = WuBackground,
+        topBar = {
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = WuBackground,
+                    navigationIconContentColor = WuTitle,
+                    actionIconContentColor = WuTitle
+                ),
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.Menu, contentDescription = "返回看板")
+                    }
+                },
+                title = {},
+                actions = {
+                    IconButton(onClick = { /* 置顶（占位） */ }) {
+                        Icon(Icons.Filled.PushPin, contentDescription = "置顶")
+                    }
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("刷新") },
+                            onClick = { menuExpanded = false; onRefresh() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("返回看板") },
+                            onClick = { menuExpanded = false; onBack() }
+                        )
+                    }
+                }
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp)
+        ) {
+            Spacer(Modifier.height(8.dp))
+            // 列标题：红色圆点 + 大号标题
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(WuAccent)
+                )
+                Spacer(Modifier.width(18.dp))
+                Text(
+                    text = section.title,
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WuTitle,
+                    lineHeight = 44.sp
+                )
+            }
+            Spacer(Modifier.height(26.dp))
+            if (section.tasks.isEmpty()) {
+                Text("（无任务）", color = WuSubtle, fontSize = 16.sp)
+            } else {
+                section.tasks.forEach { task ->
+                    DetailTaskRow(task = task, onToggle = onToggle)
+                }
+            }
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+@Composable
+private fun DetailTaskRow(
+    task: KanbanTask,
+    onToggle: (KanbanTask) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { onToggle(task) }
+            .padding(start = (task.indent * 10).dp, top = 12.dp, bottom = 12.dp)
+    ) {
+        BigCheckCircle(done = task.done)
+        Spacer(Modifier.width(18.dp))
+        Text(
+            text = task.text,
+            fontSize = 21.sp,
+            color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
+            textDecoration = if (task.done) TextDecoration.LineThrough else null,
+            lineHeight = 28.sp
+        )
+    }
+}
+
+@Composable
+private fun BigCheckCircle(done: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .then(
+                if (done) Modifier.background(WuAccent)
+                else Modifier.border(2.dp, WuCircleStroke, CircleShape)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (done) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun SectionCard(
     section: KanbanSection,
-    onToggle: (KanbanTask) -> Unit
+    onToggle: (KanbanTask) -> Unit,
+    onOpen: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpen() },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = WuCard)
     ) {

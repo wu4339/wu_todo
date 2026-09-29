@@ -1,9 +1,8 @@
-name: Build Android APK
+name: Build & Release
 
 on:
   push:
     branches: [ main, master ]
-    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -25,23 +26,59 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # 取最近一个 v* 标签作为基线，版本号 +0.0.001（patch 三位补零）
+      - name: Compute next version (+0.0.001)
+        id: ver
+        run: |
+          set -e
+          TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1)
+          BASE="${TAG#v}"
+          [ -z "$BASE" ] && BASE="1.0.000"
+          MAJ=$(echo "$BASE" | cut -d. -f1)
+          MIN=$(echo "$BASE" | cut -d. -f2)
+          PAT=$(echo "$BASE" | cut -d. -f3)
+          PAT=$((10#$PAT + 1))
+          VER=$(printf "%s.%s.%03d" "$MAJ" "$MIN" "$PAT")
+          CODE=$(( MAJ * 1000000 + MIN * 1000 + PAT ))
+          echo "base tag : ${TAG:-<none>} ($BASE)"
+          echo "next ver : $VER  (versionCode=$CODE)"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build APK (debug + release)
-        run: ./gradlew assembleDebug assembleRelease --no-daemon
+      - name: Build APKs (debug + release)
+        run: ./gradlew assembleDebug assembleRelease --no-daemon -Pwu.versionName=${{ steps.ver.outputs.version }} -Pwu.versionCode=${{ steps.ver.outputs.code }}
 
-      - name: Upload debug APK artifact
+      # 产物文件名带上版本号
+      - name: Rename APKs with version
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk "out/wu_todo-${V}-debug.apk"
+          if [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            cp app/build/outputs/apk/release/app-release-unsigned.apk "out/wu_todo-${V}-release-unsigned.apk"
+          fi
+          ls -la out
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wu_todo-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: wu_todo-${{ steps.ver.outputs.version }}
+          path: out/*.apk
+          if-no-files-found: warn
 
-      - name: Create GitHub Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/app-release-unsigned.apk
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: wu_todo v${{ steps.ver.outputs.version }}
+          body: |
+            **wu_todo v${{ steps.ver.outputs.version }}**
+            - 支持点击看板列卡片，打开该列详情页
+            - 详情页可勾选任务并写回 .md
+            - 自动构建：debug + release
+          files: out/*.apk
           generate_release_notes: true
+          fail_on_unmatched_files: false

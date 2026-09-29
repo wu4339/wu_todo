@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 版本号可由 CI 注入（-Pwu.versionName=1.0.001 -Pwu.versionCode=1000001）
+val appVersionName: String = (project.findProperty("wu.versionName") as String?) ?: "1.0.000"
+val appVersionCode: Int = (project.findProperty("wu.versionCode") as String?)?.toIntOrNull() ?: 1000000
+
 android {
     namespace = "com.wu.todo"
     compileSdk = 34
@@ -11,8 +15,8 @@ android {
         applicationId = "com.wu.todo"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
     }
 
     buildTypes {
