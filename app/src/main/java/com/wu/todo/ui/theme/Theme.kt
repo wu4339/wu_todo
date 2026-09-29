@@ -16,6 +16,7 @@ val WuCircleStroke = Color(0xFFBBBBBB) // 未勾选圆圈描边
 val WuSubtle = Color(0xFF8A8A8A)       // 次要文字
 val WuDoneGrey = Color(0xFFB4B4B4)     // 已完成任务的图标/文字（浅灰）
 val WuDivider = Color(0xFFE2E2E2)      // 分隔线
+val WuFab = Color(0xFFF6C344)          // 添加任务悬浮按钮（黄）
 
 private val LightScheme = lightColorScheme(
     background = WuBackground,

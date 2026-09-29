@@ -168,6 +168,25 @@ object KanbanParser {
         return result
     }
 
+    /** 在指定列末尾追加一个未完成任务行 `- [ ] 文本`，返回新的行集合 */
+    fun addTask(lines: List<String>, headerLineIndex: Int, text: String): List<String> {
+        if (text.isBlank()) return lines
+        var insertAt = if (headerLineIndex in lines.indices) headerLineIndex + 1 else 0
+        var lastTaskEnd = -1
+        var i = insertAt
+        while (i < lines.size) {
+            val t = lines[i].trim()
+            // 碰到下一列标题或 Obsidian 设置注释块即认为本列结束
+            if (SECTION_RE.find(t) != null || t.startsWith("%%")) break
+            if (TASK_RE.find(lines[i]) != null) lastTaskEnd = i
+            i++
+        }
+        val at = if (lastTaskEnd >= 0) lastTaskEnd + 1 else insertAt
+        val result = ArrayList(lines)
+        result.add(at, "- [ ] ${text.trim()}")
+        return result
+    }
+
     /** 删除某条任务所在的行（仅当该行仍是任务行时才删），返回新的行集合 */
     fun removeTask(lines: List<String>, task: KanbanTask): List<String> {
         val idx = task.lineIndex

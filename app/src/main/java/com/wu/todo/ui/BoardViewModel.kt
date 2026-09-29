@@ -27,8 +27,8 @@ data class BoardUiState(
     val readOnly: Boolean = false,
     /** 已置顶（pin）的看板列标题集合，按文件 uri 持久化在本地 */
     val pinnedTitles: Set<String> = emptySet(),
-    /** 当从文件夹里选中了多个 .md 文件时，弹出选择列表 */
-    val folderChoices: List<FolderFile>? = null
+    /** 左侧栏展示的文件夹内所有 .md 文件 */
+    val drawerFiles: List<FolderFile> = emptyList()
 ) {
     val totalTasks get() = sections.sumOf { it.total }
     val doneTasks get() = sections.sumOf { it.doneCount }
@@ -56,22 +56,19 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     fun openFolder(uri: Uri) {
         takePersistable(uri)
         val files = runCatching { repo.listMarkdownInTree(uri) }.getOrDefault(emptyList())
-        when {
-            files.isEmpty() -> update { copy(message = "该文件夹下没有找到 .md 文件") }
-            files.size == 1 -> openFile(files.first().second)
-            else -> update {
-                copy(
-                    loading = false,
-                    fileName = repo.displayName(uri) ?: "文件夹",
-                    fileUri = uri,
-                    folderChoices = files.map { FolderFile(it.first, it.second) }
-                )
-            }
+        if (files.isEmpty()) {
+            update { copy(message = "该文件夹下没有找到 .md 文件") }
+            return
+        }
+        // 文件夹内所有 md 文件放入左侧栏；当前文件不在其中时自动打开第一个
+        val uris = files.map { it.second }
+        update { copy(drawerFiles = files.map { FolderFile(it.first, it.second) }) }
+        if (state.value.fileUri !in uris) {
+            openFile(files.first().second)
         }
     }
 
     fun chooseFolderFile(uri: Uri) {
-        update { copy(folderChoices = null) }
         openFile(uri)
     }
 
@@ -146,11 +143,25 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
             .onFailure { update { copy(readOnly = true, message = "保存失败，已切换为只读模式") } }
     }
 
-    fun dismissFolderDialog() = update { copy(folderChoices = null) }
+    /** 在指定列末尾添加一个未完成任务并写回 .md */
+    fun addTask(section: KanbanSection, text: String) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+
+        val newLines = KanbanParser.addTask(cur.lines, section.headerLineIndex, trimmed)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
     fun consumeMessage() = update { copy(message = null) }
 
     private fun loadFrom(uri: Uri) {
-        update { copy(loading = true, error = null, folderChoices = null) }
+        update { copy(loading = true, error = null) }
         runCatching {
             val raw = repo.readText(uri)
             val board = KanbanParser.parse(raw, repo.displayName(uri) ?: "看板")

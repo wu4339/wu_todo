@@ -24,8 +24,11 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -37,31 +40,39 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.PushPin
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,8 +81,10 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wu.todo.data.KanbanSection
@@ -82,9 +95,11 @@ import com.wu.todo.ui.theme.WuCard
 import com.wu.todo.ui.theme.WuCircleStroke
 import com.wu.todo.ui.theme.WuDivider
 import com.wu.todo.ui.theme.WuDoneGrey
+import com.wu.todo.ui.theme.WuFab
 import com.wu.todo.ui.theme.WuSubtle
 import com.wu.todo.ui.theme.WuTaskText
 import com.wu.todo.ui.theme.WuTitle
+import kotlinx.coroutines.launch
 
 /** 用「列头行号」作为一列的唯一 key，重命名标题后 key 不变，详情页不会跳回总览 */
 private fun KanbanSection.uniqueKey() = "col@${headerLineIndex}"
@@ -101,6 +116,9 @@ fun BoardScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     // 当前打开的看板列（null 表示在看板总览）
     var openedSectionKey by remember { mutableStateOf<String?>(null) }
+    // 左侧栏（文件抽屉）
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -124,11 +142,30 @@ fun BoardScreen(
             onDelete = viewModel::delete,
             onTogglePin = { viewModel.togglePin(openedSection) },
             onRename = { newTitle -> viewModel.renameSection(openedSection, newTitle) },
+            onAdd = { text -> viewModel.addTask(openedSection, text) },
             onRefresh = viewModel::reload
         )
         return
     }
 
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            BoardDrawerContent(
+                files = state.drawerFiles,
+                currentUri = state.fileUri,
+                onPick = { uri ->
+                    openedSectionKey = null
+                    viewModel.chooseFolderFile(uri)
+                    scope.launch { drawerState.close() }
+                },
+                onOpenFolder = {
+                    scope.launch { drawerState.close() }
+                    onOpenFolder()
+                }
+            )
+        }
+    ) {
     Scaffold(
         containerColor = WuBackground,
         topBar = {
@@ -136,8 +173,14 @@ fun BoardScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = WuBackground,
                     titleContentColor = WuTitle,
+                    navigationIconContentColor = WuTitle,
                     actionIconContentColor = WuTitle
                 ),
+                navigationIcon = {
+                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        Icon(Icons.Filled.Menu, contentDescription = "打开文件列表")
+                    }
+                },
                 title = {
                     Column {
                         Text(
@@ -258,14 +301,6 @@ fun BoardScreen(
             }
         }
     }
-
-    // 文件夹内多个 .md 文件时的选择对话框
-    if (state.folderChoices != null) {
-        FolderPickerDialog(
-            files = state.folderChoices!!,
-            onPick = { viewModel.chooseFolderFile(it) },
-            onDismiss = { viewModel.dismissFolderDialog() }
-        )
     }
 }
 
@@ -280,10 +315,14 @@ private fun SectionDetailScreen(
     onDelete: (KanbanTask) -> Unit,
     onTogglePin: () -> Unit,
     onRename: (String) -> Unit,
+    onAdd: (String) -> Unit,
     onRefresh: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     var completedExpanded by remember { mutableStateOf(true) }
+    // 底部弹出的添加任务输入
+    var showAddSheet by remember { mutableStateOf(false) }
+    var newTaskText by remember { mutableStateOf("") }
     // 标题编辑状态
     var editingTitle by remember(section.uniqueKey()) { mutableStateOf(false) }
     var titleDraft by remember(section.uniqueKey()) { mutableStateOf(section.title) }
@@ -353,7 +392,20 @@ private fun SectionDetailScreen(
                 }
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddSheet = true },
+                containerColor = WuFab,
+                contentColor = WuTitle
+            ) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = "添加任务",
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -488,6 +540,58 @@ private fun SectionDetailScreen(
             }
 
             Spacer(Modifier.height(40.dp))
+        }
+    }
+
+    // 底部弹出：新建任务输入条（输入 + 右侧加号提交）
+    if (showAddSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showAddSheet = false },
+            containerColor = WuCard
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+            ) {
+                TextField(
+                    value = newTaskText,
+                    onValueChange = { newTaskText = it },
+                    placeholder = { Text("new task", color = WuSubtle, fontSize = 16.sp) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        cursorColor = WuAccent
+                    ),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        onAdd(newTaskText)
+                        newTaskText = ""
+                        showAddSheet = false
+                    }),
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = {
+                        onAdd(newTaskText)
+                        newTaskText = ""
+                        showAddSheet = false
+                    }
+                ) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = "确认添加",
+                        tint = WuTitle,
+                        modifier = Modifier.size(30.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(18.dp))
         }
     }
 }
@@ -643,28 +747,30 @@ private fun SectionCard(
                 Text("（无任务）", color = WuSubtle, fontSize = 12.sp)
             } else {
                 section.tasks.forEach { task ->
-                    TaskRow(task = task, onToggle = onToggle)
+                    TaskRow(task = task, onToggle = onToggle, onOpen = onOpen)
                 }
             }
         }
     }
 }
 
+/** 主界面卡片里的任务行：点击复选框=切换完成并写回 .md；点击其余区域=打开该列详情 */
 @Composable
 private fun TaskRow(
     task: KanbanTask,
-    onToggle: (KanbanTask) -> Unit
+    onToggle: (KanbanTask) -> Unit,
+    onOpen: () -> Unit
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .clickable { onToggle(task) }
-            .padding(start = (task.indent * 10).dp, top = 9.dp, bottom = 9.dp)
+            .clickable { onOpen() }
+            .padding(start = (task.indent * 10).dp, top = 5.dp, bottom = 5.dp)
     ) {
-        CheckCircle(done = task.done)
-        Spacer(Modifier.width(14.dp))
+        CheckCircle(done = task.done, size = 18.dp, onClick = { onToggle(task) })
+        Spacer(Modifier.width(12.dp))
         Text(
             text = task.text,
             fontSize = 15.sp,
@@ -676,11 +782,16 @@ private fun TaskRow(
 }
 
 @Composable
-private fun CheckCircle(done: Boolean) {
+private fun CheckCircle(
+    done: Boolean,
+    size: Dp = 22.dp,
+    onClick: (() -> Unit)? = null
+) {
     Box(
         modifier = Modifier
-            .size(22.dp)
+            .size(size)
             .clip(CircleShape)
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .then(
                 if (done) Modifier.background(WuAccent)
                 else Modifier.border(2.dp, WuCircleStroke, CircleShape)
@@ -692,7 +803,7 @@ private fun CheckCircle(done: Boolean) {
                 imageVector = Icons.Filled.Check,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(size * 0.62f)
             )
         }
     }
@@ -727,34 +838,77 @@ private fun EmptyState(
     }
 }
 
+/** 主界面左侧栏：列出所选文件夹内的全部 .md 文件，点击切换；底部提供选择文件夹入口 */
 @Composable
-private fun FolderPickerDialog(
+private fun BoardDrawerContent(
     files: List<FolderFile>,
+    currentUri: android.net.Uri?,
     onPick: (android.net.Uri) -> Unit,
-    onDismiss: () -> Unit
+    onOpenFolder: () -> Unit
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("选择看板文件") },
-        text = {
-            Column {
-                files.forEach { file ->
-                    TextButton(
-                        onClick = { onPick(file.uri) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            file.name,
-                            modifier = Modifier.fillMaxWidth(),
-                            color = WuTitle,
-                            fontSize = 13.sp
-                        )
+    ModalDrawerSheet(drawerContainerColor = WuCard) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 18.dp, vertical = 20.dp)
+        ) {
+            Text("wu_todo", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = WuAccent)
+            Spacer(Modifier.height(4.dp))
+            Text("看板文件", fontSize = 12.sp, color = WuSubtle)
+            Spacer(Modifier.height(14.dp))
+            if (files.isEmpty()) {
+                Text(
+                    "尚未选择文件夹\n\n点下方按钮选择看板文件夹，\n其中所有 .md 文件会列在这里",
+                    fontSize = 13.sp,
+                    color = WuSubtle
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    files.forEach { f ->
+                        val selected = f.uri == currentUri
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { onPick(f.uri) }
+                                .padding(horizontal = 8.dp, vertical = 10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (selected) WuAccent else Color.Transparent)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                f.name,
+                                fontSize = 14.sp,
+                                color = if (selected) WuTitle else WuTaskText,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            Spacer(Modifier.height(10.dp))
+            TextButton(onClick = onOpenFolder) {
+                Icon(
+                    Icons.Filled.FolderOpen,
+                    contentDescription = null,
+                    tint = WuSubtle,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("选择看板文件夹", fontSize = 13.sp, color = WuSubtle)
+            }
         }
-    )
+    }
 }
