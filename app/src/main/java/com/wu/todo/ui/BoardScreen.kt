@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -99,6 +101,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -781,11 +785,27 @@ private fun KeyboardSheet(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
+    val density = LocalDensity.current
+    val imeInsets = WindowInsets.ime
+    val scope = rememberCoroutineScope()
+    var closing by remember { mutableStateOf(false) }
+    // 平滑关闭：先收键盘，面板骑在键盘上同步降到底部，键盘收完再移除窗口（避免跳动）
     val close = {
-        keyboard?.hide()
-        onDismiss()
+        if (!closing) {
+            closing = true
+            keyboard?.hide()
+            scope.launch {
+                val start = System.currentTimeMillis()
+                do {
+                    delay(16)
+                } while (System.currentTimeMillis() - start < 260 ||
+                    (imeInsets.getBottom(density) > 0 && System.currentTimeMillis() - start < 600)
+                )
+                onDismiss()
+            }
+        }
     }
-    // 面板从组合移除时（Done/保存/遮罩/返回键）一律收起键盘
+    // 面板从组合移除时（Done/保存等直接关闭路径）兜底收起键盘
     DisposableEffect(Unit) {
         onDispose { keyboard?.hide() }
     }
@@ -847,7 +867,7 @@ private fun TaskEditSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.72f)
+                .height((LocalConfiguration.current.screenHeightDp * 0.72f).dp)
                 .padding(horizontal = 20.dp)
         ) {
             // 顶部：右上角删除按钮
@@ -1191,7 +1211,7 @@ private fun TaskRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onOpen() }
-            .padding(start = (task.indent * 10).dp, top = 5.dp, bottom = 5.dp)
+            .padding(start = (task.indent * 10).dp, top = 3.dp, bottom = 3.dp)
     ) {
         CheckCircle(done = task.done, size = 14.dp, onClick = { onToggle(task) })
         Spacer(Modifier.width(10.dp))
@@ -1360,7 +1380,7 @@ private fun AddListSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.72f)
+                .height((LocalConfiguration.current.screenHeightDp * 0.72f).dp)
                 .padding(horizontal = 20.dp)
         ) {
             // 列表名称输入
