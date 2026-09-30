@@ -558,6 +558,8 @@ private fun SectionDetailScreen(
                     }
                 }
             )
+            // 顶栏与列表标题之间的分割线
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
@@ -656,7 +658,7 @@ private fun SectionDetailScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 48.dp, bottom = 24.dp)
+                        .padding(top = 60.dp, bottom = 24.dp)
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.empty_illustration),
@@ -824,8 +826,10 @@ private fun KeyboardSheet(
                 val start = System.currentTimeMillis()
                 do {
                     delay(16)
+                    // 持续压制键盘：对抗尚未完成的 show 请求（弹出途中返回时，避免键盘先升完再降的闪跳）
+                    if (imeInsets.getBottom(density) > 0) keyboard?.hide()
                 } while (System.currentTimeMillis() - start < 260 ||
-                    (imeInsets.getBottom(density) > 0 && System.currentTimeMillis() - start < 600)
+                    (imeInsets.getBottom(density) > 0 && System.currentTimeMillis() - start < 1200)
                 )
                 onDismiss()
             }
