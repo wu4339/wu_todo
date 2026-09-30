@@ -668,7 +668,7 @@ private fun SectionDetailScreen(
                     )
                 }
             }
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(15.dp))
 
             // 未完成任务
             if (activeTasks.isEmpty() && doneTasks.isEmpty()) {
@@ -1117,7 +1117,7 @@ private fun DetailTaskRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onEdit(task) }
-            .padding(start = (task.indent * 10).dp, top = 11.dp, bottom = 11.dp)
+            .padding(start = (task.indent * 10).dp, top = 8.dp, bottom = 8.dp)
     ) {
         Box(
             modifier = Modifier
@@ -1131,6 +1131,7 @@ private fun DetailTaskRow(
         Text(
             text = task.text,
             fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
             color = WuTitle,
             lineHeight = 19.sp
         )
@@ -1150,7 +1151,7 @@ private fun CompletedTaskRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .padding(start = (task.indent * 10).dp, top = 8.dp, bottom = 8.dp)
+            .padding(start = (task.indent * 10).dp, top = 6.dp, bottom = 6.dp)
     ) {
         Icon(
             imageVector = Icons.Filled.Check,
@@ -1165,6 +1166,7 @@ private fun CompletedTaskRow(
         Text(
             text = task.text,
             fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
             color = WuDoneGrey,
             lineHeight = 19.sp,
             modifier = Modifier
