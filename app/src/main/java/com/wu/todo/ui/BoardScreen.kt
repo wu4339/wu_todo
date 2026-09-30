@@ -107,6 +107,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1269,12 +1270,30 @@ private fun TaskEditSheet(
     var moveSheetOpen by remember(task.id) { mutableStateOf(false) }
     // Add items 交互状态：0=收起 1=选项菜单(Note/Subtask) 2=备注输入 3=子任务输入
     var addItemState by remember(task.id) { mutableStateOf(0) }
-    var subText by remember { mutableStateOf("") }
+    // 子任务草稿行：每点一次「Add subtasks」追加一行，各行独立输入、可单独删除
+    val draftSubs = remember(task.id) { mutableStateListOf<DraftSub>() }
+    var draftSeq by remember(task.id) { mutableStateOf(0L) }
+    var autoFocusDraftId by remember(task.id) { mutableStateOf(-1L) }
     var noteText by remember(task.id) { mutableStateOf(task.note) }
     val textFocus = remember { FocusRequester() }
     val noteFocus = remember { FocusRequester() }
-    val subFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+
+    // 该任务已有的子任务（board 里缩进在父任务之下的任务行）
+    val existingSubs = currentSection.subtasksOf(task)
+
+    // 追加一行空草稿并自动聚焦
+    val addDraft: () -> Unit = {
+        val d = DraftSub(draftSeq++, "")
+        draftSubs.add(d)
+        autoFocusDraftId = d.id
+    }
+    // 把所有非空草稿写入 board（逆序提交：addSubtask 每次插到父任务行下方，逆序可保持输入顺序）
+    val flushDrafts: () -> Unit = {
+        draftSubs.map { it.value.trim() }.filter { it.isNotEmpty() }.asReversed()
+            .forEach { onAddSubtask(task, it) }
+        draftSubs.clear()
+    }
 
     // "Add items" 入口行（未展开时、以及备注行下方共用）
     val addItemsEntry: @Composable () -> Unit = {
@@ -1307,18 +1326,18 @@ private fun TaskEditSheet(
         }
     }
 
-    // 选 Note / Subtask 后：光标自动聚焦到对应输入框（持续抢焦点，覆盖面板初始拉焦循环）
+    // 选 Note 后：光标自动聚焦到备注输入框（持续抢焦点，覆盖面板初始拉焦循环）
     LaunchedEffect(addItemState) {
         when (addItemState) {
             2 -> repeat(45) { noteFocus.requestFocus(); delay(16) }
-            3 -> repeat(45) { subFocus.requestFocus(); delay(16) }
         }
     }
 
     // 键盘一体化面板：出现即拉起键盘，面板随键盘同步升起
     // contentPadding = 0：分割线需要通栏（左边缘到右边缘），水平内边距由各行自己控制
     KeyboardSheet(
-        onDismiss = onDismiss,
+        // 关闭面板前先把草稿子任务落盘，避免输入内容丢失
+        onDismiss = { flushDrafts(); onDismiss() },
         focus = textFocus,
         imeAutoClose = !moveSheetOpen,
         contentPadding = PaddingValues(0.dp),
@@ -1434,6 +1453,24 @@ private fun TaskEditSheet(
                 }
             }
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            // 中部内容可滚动：子任务行可能较多
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+            // 子任务区：已有子任务 + 正在输入的新子任务行 +「Add subtasks」按钮（每点一次多一行）
+            if (existingSubs.isNotEmpty() || draftSubs.isNotEmpty() || addItemState == 3) {
+                SubtaskSection(
+                    existing = existingSubs,
+                    drafts = draftSubs,
+                    autoFocusId = autoFocusDraftId,
+                    onAdd = addDraft,
+                    onRemove = { d -> draftSubs.remove(d) }
+                )
+                HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            }
             // Add items：先弹出选项菜单（Note / Subtask），再进入对应输入行
             when (addItemState) {
                 0 -> {
@@ -1472,7 +1509,7 @@ private fun TaskEditSheet(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(WuBackground)
-                                .clickable { addItemState = 3 }
+                                .clickable { addItemState = 3; addDraft() }
                                 .padding(horizontal = 14.dp, vertical = 12.dp)
                         ) {
                             Icon(
@@ -1543,23 +1580,120 @@ private fun TaskEditSheet(
                     addItemsEntry()
                 }
                 else -> {
-                    // 子任务（subtask）行：左侧列表图标 + 圆形勾选框 + 多行输入框 + 右侧 ✕（保存并收起）。
-                    // 与参考图一致：输入行下方是「Add subtasks」药丸按钮（可连续添加），再下方分割线 + Add items 入口。
+                    // 0 = 收起；3 = 子任务编辑中（子任务区已在上方渲染）
+                    addItemsEntry()
+                }
+            }
+            }
+            // 右下角黄色对勾：保存文本修改（沉底）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FloatingActionButton(
+                    onClick = {
+                        onRenameTask(task, text.toSingleLineTaskText())
+                        // 保存前先把草稿子任务落盘
+                        flushDrafts()
+                        onDismiss()
+                    },
+                    containerColor = WuFab,
+                    contentColor = WuTitle
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = "保存")
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+/** 任务编辑面板里正在输入的子任务草稿行（独立输入，可单独删除） */
+private class DraftSub(val id: Long, value: String) {
+    var value by mutableStateOf(value)
+}
+
+/** 取某任务正下方紧邻的缩进子任务行（board 中 indent 大于父任务的任务即其子任务） */
+private fun KanbanSection.subtasksOf(task: KanbanTask): List<KanbanTask> {
+    val i = tasks.indexOfFirst { it.lineIndex == task.lineIndex }
+    if (i < 0) return emptyList()
+    val base = task.indent
+    val out = ArrayList<KanbanTask>()
+    var j = i + 1
+    while (j < tasks.size && tasks[j].indent > base) {
+        out.add(tasks[j])
+        j++
+    }
+    return out
+}
+
+/**
+ * 子任务区：列出该任务已有的子任务 + 正在输入的草稿行 +「Add subtasks」按钮。
+ * 每点一次按钮就追加一行草稿（各行独立输入、右侧 ✕ 可删除该行）。
+ */
+@Composable
+private fun SubtaskSection(
+    existing: List<KanbanTask>,
+    drafts: List<DraftSub>,
+    autoFocusId: Long,
+    onAdd: () -> Unit,
+    onRemove: (DraftSub) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.Top,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(top = 10.dp)
+    ) {
+        // 左侧列表图标：与第一行子任务对齐
+        Icon(
+            Icons.Outlined.FormatListBulleted,
+            contentDescription = null,
+            tint = WuSubtle,
+            modifier = Modifier
+                .padding(top = 10.dp)
+                .size(20.dp)
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            // 已有子任务：只读展示（来自 board，缩进在父任务之下）
+            existing.forEach { sub ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.RadioButtonUnchecked,
+                        contentDescription = null,
+                        tint = WuSubtle,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        sub.text,
+                        fontSize = 15.sp,
+                        color = WuTitle,
+                        lineHeight = 22.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            // 新子任务草稿行：多行输入 + 右侧 ✕ 删除该行
+            drafts.forEach { d ->
+                key(d.id) {
+                    val fr = remember { FocusRequester() }
+                    LaunchedEffect(autoFocusId, d.id) {
+                        if (autoFocusId == d.id) fr.requestFocus()
+                    }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp)
-                            .padding(top = 8.dp)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(
-                            Icons.Outlined.FormatListBulleted,
-                            contentDescription = null,
-                            tint = WuSubtle,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(14.dp))
-                        // 未勾选的空圈（子任务在 board 里对应 [ ] 项）
                         Icon(
                             Icons.Outlined.RadioButtonUnchecked,
                             contentDescription = null,
@@ -1568,8 +1702,8 @@ private fun TaskEditSheet(
                         )
                         Spacer(Modifier.width(12.dp))
                         TextField(
-                            value = subText,
-                            onValueChange = { subText = it },
+                            value = d.value,
+                            onValueChange = { d.value = it },
                             placeholder = { Text("Subtask", color = WuSubtle, fontSize = 15.sp) },
                             // 多行：自动换行、随内容增高（最多 5 行，超出后框内滚动）
                             singleLine = false,
@@ -1589,76 +1723,44 @@ private fun TaskEditSheet(
                             ),
                             modifier = Modifier
                                 .weight(1f)
-                                .focusRequester(subFocus)
+                                .focusRequester(fr)
                         )
                         Spacer(Modifier.width(8.dp))
-                        IconButton(onClick = {
-                            if (subText.isNotBlank()) onAddSubtask(task, subText)
-                            subText = ""
-                            addItemState = 0
-                        }) {
+                        IconButton(onClick = { onRemove(d) }) {
                             Icon(
                                 Icons.Outlined.Close,
-                                contentDescription = "保存子任务并收起",
+                                contentDescription = "删除该子任务行",
                                 tint = WuSubtle,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                     }
-                    // 「Add subtasks」按钮：提交当前子任务并保持输入态，可继续添加下一条
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 54.dp, end = 20.dp)
-                            .padding(top = 4.dp, bottom = 10.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(WuBackground)
-                                .clickable {
-                                    if (subText.isNotBlank()) {
-                                        onAddSubtask(task, subText)
-                                        subText = ""
-                                    }
-                                }
-                                .padding(horizontal = 16.dp, vertical = 10.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.Add,
-                                contentDescription = null,
-                                tint = WuTitle,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("Add subtasks", fontSize = 15.sp, color = WuTitle)
-                        }
-                    }
-                    HorizontalDivider(color = WuDivider, thickness = 1.dp)
-                    addItemsEntry()
                 }
             }
-            Spacer(Modifier.weight(1f))
-            // 右下角黄色对勾：保存文本修改（沉底）
+            // 「Add subtasks」按钮：每点一次追加一行
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.End
+                    .padding(top = 6.dp, bottom = 12.dp)
             ) {
-                FloatingActionButton(
-                    onClick = {
-                        onRenameTask(task, text.toSingleLineTaskText())
-                        onDismiss()
-                    },
-                    containerColor = WuFab,
-                    contentColor = WuTitle
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(WuBackground)
+                        .clickable { onAdd() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
-                    Icon(Icons.Filled.Check, contentDescription = "保存")
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = null,
+                        tint = WuTitle,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Add subtasks", fontSize = 15.sp, color = WuTitle)
                 }
             }
-            Spacer(Modifier.height(12.dp))
         }
     }
 }
