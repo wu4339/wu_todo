@@ -65,6 +65,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.FormatListBulleted
 import androidx.compose.material.icons.outlined.Notes
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PushPin
@@ -1542,36 +1543,100 @@ private fun TaskEditSheet(
                     addItemsEntry()
                 }
                 else -> {
-                    // 子任务（subtask）输入行
+                    // 子任务（subtask）行：左侧列表图标 + 圆形勾选框 + 多行输入框 + 右侧 ✕（保存并收起）。
+                    // 与参考图一致：输入行下方是「Add subtasks」药丸按钮（可连续添加），再下方分割线 + Add items 入口。
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp)
+                            .padding(horizontal = 20.dp)
+                            .padding(top = 8.dp)
                     ) {
+                        Icon(
+                            Icons.Outlined.FormatListBulleted,
+                            contentDescription = null,
+                            tint = WuSubtle,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        // 未勾选的空圈（子任务在 board 里对应 [ ] 项）
+                        Icon(
+                            Icons.Outlined.RadioButtonUnchecked,
+                            contentDescription = null,
+                            tint = WuSubtle,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
                         TextField(
                             value = subText,
                             onValueChange = { subText = it },
-                            placeholder = { Text("子任务内容", color = WuSubtle, fontSize = 14.sp) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(10.dp),
+                            placeholder = { Text("Subtask", color = WuSubtle, fontSize = 15.sp) },
+                            // 多行：自动换行、随内容增高（最多 5 行，超出后框内滚动）
+                            singleLine = false,
+                            minLines = 1,
+                            maxLines = 5,
+                            textStyle = TextStyle(
+                                fontSize = 15.sp,
+                                color = WuTitle,
+                                lineHeight = 22.sp
+                            ),
                             colors = TextFieldDefaults.colors(
-                                focusedContainerColor = WuBackground,
-                                unfocusedContainerColor = WuBackground,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent,
                                 unfocusedIndicatorColor = Color.Transparent,
                                 cursorColor = WuAccent
                             ),
-                            modifier = Modifier.weight(1f).focusRequester(subFocus)
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(subFocus)
                         )
+                        Spacer(Modifier.width(8.dp))
                         IconButton(onClick = {
-                            onAddSubtask(task, subText)
+                            if (subText.isNotBlank()) onAddSubtask(task, subText)
                             subText = ""
                             addItemState = 0
                         }) {
-                            Icon(Icons.Filled.Add, contentDescription = "添加子任务", tint = WuTitle)
+                            Icon(
+                                Icons.Outlined.Close,
+                                contentDescription = "保存子任务并收起",
+                                tint = WuSubtle,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
+                    // 「Add subtasks」按钮：提交当前子任务并保持输入态，可继续添加下一条
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 54.dp, end = 20.dp)
+                            .padding(top = 4.dp, bottom = 10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(WuBackground)
+                                .clickable {
+                                    if (subText.isNotBlank()) {
+                                        onAddSubtask(task, subText)
+                                        subText = ""
+                                    }
+                                }
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Add,
+                                contentDescription = null,
+                                tint = WuTitle,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Add subtasks", fontSize = 15.sp, color = WuTitle)
+                        }
+                    }
+                    HorizontalDivider(color = WuDivider, thickness = 1.dp)
+                    addItemsEntry()
                 }
             }
             Spacer(Modifier.weight(1f))
