@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -827,26 +829,47 @@ private fun KeyboardSheet(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
-    // 侧滑返回/点遮罩：立即退出编辑并收起键盘
-    // （跟随键盘慢慢关闭会在"升起-收起"反转时产生闪跳，直接立即关闭最干净）
+    // 优雅关闭流程：closing=true 后 → 停止拉键盘循环 + 收起键盘 + 面板下滑出屏 + 遮罩淡出，
+    // 三者同步进行（约 320ms），动画结束后才真正卸载面板——彻底消除"瞬间消失"闪跳
+    var closing by remember { mutableStateOf(false) }
     val close = {
-        keyboard?.hide()
-        onDismiss()
+        if (!closing) {
+            closing = true
+            keyboard?.hide()
+        }
+    }
+    // 关闭动画结束后才移除面板（此前面板保持组合，跟随键盘一起降下去）
+    LaunchedEffect(closing) {
+        if (closing) {
+            delay(340)
+            onDismiss()
+        }
     }
     // 面板从组合移除时（Done/保存等直接关闭路径）兜底收起键盘
     DisposableEffect(Unit) {
         onDispose { keyboard?.hide() }
     }
-    // 侧滑返回：手势一完成立即退出编辑并收起键盘（predictive back 协议，拖一半松手=取消不关闭）
+    // 侧滑返回：手势一完成即走优雅关闭（predictive back 协议，拖一半松手=取消不关闭）
     PredictiveBackHandler { flow ->
         flow.collect { }
-        keyboard?.hide()
-        onDismiss()
+        close()
     }
+    // 遮罩淡出
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (closing) 0f else 0.32f,
+        animationSpec = tween(280),
+        label = "scrim"
+    )
+    // 面板整体下滑出屏（与键盘收起同步，键盘和输入框一起降下去）
+    val exitOffsetY by animateDpAsState(
+        targetValue = if (closing) LocalConfiguration.current.screenHeightDp.dp else 0.dp,
+        animationSpec = tween(320),
+        label = "panelExit"
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.32f))
+            .background(Color.Black.copy(alpha = scrimAlpha))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -857,15 +880,17 @@ private fun KeyboardSheet(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .imePadding()
+                .offset(y = exitOffsetY)
                 .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) { /* 吃掉面板内点击，不关闭 */ }
         ) {
-            // 出现即聚焦并拉起键盘（与面板同时出现，逐帧重试保证成功）
+            // 出现即聚焦并拉起键盘（逐帧重试保证成功；一旦进入关闭流程立即停止，避免 show/hide 打架闪跳）
             LaunchedEffect(Unit) {
                 repeat(40) {
+                    if (closing) return@LaunchedEffect
                     focus.requestFocus()
                     keyboard?.show()
                     delay(16)
@@ -1246,11 +1271,11 @@ private fun TaskRow(
             .padding(start = (task.indent * 10).dp, top = 3.dp, bottom = 3.dp)
     ) {
         if (task.done) {
-            // 已完成：只显示勾，不带复选框圆圈（仍可点击切换回未完成）
+            // 已完成：只显示勾（灰色），不带复选框圆圈（仍可点击切换回未完成）
             Icon(
                 imageVector = Icons.Filled.Check,
                 contentDescription = null,
-                tint = WuAccent,
+                tint = WuDoneGrey,
                 modifier = Modifier
                     .size(15.dp)
                     .clickable { onToggle(task) }
