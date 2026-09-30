@@ -233,11 +233,10 @@ fun BoardScreen(
                     }
                 },
                 title = {
-                    // 不再显示应用名 wu_todo，只显示当前文件与完成进度
+                    // 只显示当前文件名，不显示已完成进度
                     if (state.fileName != null) {
                         val sub = buildString {
                             append(state.fileName)
-                            if (state.totalTasks > 0) append(" · 已完成 ${state.doneTasks}/${state.totalTasks}")
                             if (state.readOnly) append(" · 只读")
                         }
                         Text(
@@ -423,6 +422,11 @@ private fun SectionDetailScreen(
     // 标题编辑状态
     var editingTitle by remember(section.uniqueKey()) { mutableStateOf(false) }
     var titleDraft by remember(section.uniqueKey()) { mutableStateOf(section.title) }
+    // 点击圆点：在调色板中循环切换本列颜色（编辑态/展示态共用）
+    val cycleDotColor = {
+        val idx = ListPalette.indexOf(dotColor.toArgb().toLong())
+        onSetDotColor(ListPalette[(idx + 1) % ListPalette.size].toInt())
+    }
 
     // 系统返回键/手势：回到看板主界面（编辑标题时先退出编辑）
     // 添加任务/编辑任务窗口打开时禁用此回调，由 KeyboardSheet 自己的 BackHandler 处理返回（只关窗口）
@@ -609,6 +613,15 @@ private fun SectionDetailScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    // 编辑态同样可以点击圆点换色
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(dotColor)
+                            .clickable { cycleDotColor() }
+                    )
+                    Spacer(Modifier.width(14.dp))
                     OutlinedTextField(
                         value = titleDraft,
                         onValueChange = { titleDraft = it },
@@ -651,11 +664,7 @@ private fun SectionDetailScreen(
                             .size(20.dp)
                             .clip(CircleShape)
                             .background(dotColor)
-                            .clickable {
-                                // ListPalette 为 Long 字面量列表，与 ARGB Int 转换比较
-                                val idx = ListPalette.indexOf(dotColor.toArgb().toLong())
-                                onSetDotColor(ListPalette[(idx + 1) % ListPalette.size].toInt())
-                            }
+                            .clickable { cycleDotColor() }
                     )
                     Spacer(Modifier.width(16.dp))
                     Text(
@@ -1125,7 +1134,7 @@ private fun DetailTaskRow(
                 .clickable { onToggle(task) }
                 .padding(2.dp)
         ) {
-            BigCheckCircle(done = false)
+            BigCheckCircle(done = false, size = 18.dp, strokeColor = WuTitle)
         }
         Spacer(Modifier.width(14.dp))
         Text(
@@ -1187,14 +1196,18 @@ private fun CompletedTaskRow(
 }
 
 @Composable
-private fun BigCheckCircle(done: Boolean) {
+private fun BigCheckCircle(
+    done: Boolean,
+    size: Dp = 20.dp,
+    strokeColor: Color = WuCircleStroke
+) {
     Box(
         modifier = Modifier
-            .size(20.dp)
+            .size(size)
             .clip(CircleShape)
             .then(
                 if (done) Modifier.background(WuAccent)
-                else Modifier.border(1.5.dp, WuCircleStroke, CircleShape)
+                else Modifier.border(1.5.dp, strokeColor, CircleShape)
             ),
         contentAlignment = Alignment.Center
     ) {
