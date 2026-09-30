@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -212,7 +214,7 @@ fun BoardScreen(
             onAdd = { text -> viewModel.addTask(openedSection, text) },
             onRenameTask = viewModel::renameTask,
             onMoveTask = { task, target -> viewModel.moveTask(task, target, openedSection) },
-            onAddSubtask = viewModel::addSubtask,
+            onSetSubtasks = viewModel::replaceSubtasks,
             onSetNote = viewModel::setNote,
             onDeleteList = { viewModel.deleteSection(openedSection) },
             onSetAllDone = { done -> viewModel.setAllTasks(openedSection, done) },
@@ -437,7 +439,7 @@ private fun SectionDetailScreen(
     onAdd: (String) -> Unit,
     onRenameTask: (KanbanTask, String) -> Unit,
     onMoveTask: (KanbanTask, KanbanSection) -> Unit,
-    onAddSubtask: (KanbanTask, String) -> Unit,
+    onSetSubtasks: (KanbanTask, List<Pair<String, Boolean>>) -> Unit,
     onSetNote: (KanbanTask, String) -> Unit,
     onDeleteList: () -> Unit,
     onSetAllDone: (Boolean) -> Unit,
@@ -979,7 +981,7 @@ private fun SectionDetailScreen(
             onDismiss = { editingTask = null },
             onRenameTask = onRenameTask,
             onMoveTask = onMoveTask,
-            onAddSubtask = onAddSubtask,
+            onSetSubtasks = onSetSubtasks,
             onSetNote = onSetNote,
             onDelete = onDelete,
             onSetDotColor = onSetDotColor
@@ -1161,6 +1163,10 @@ private fun KeyboardSheet(
     compact: Boolean = false,
     /** 内容区水平内边距：默认 20dp。需要"分割线通栏"的面板（如任务编辑页）传 0.dp，自行控制各行的内边距 */
     contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp),
+    /** 面板出现时是否自动聚焦并拉起键盘。false = 打开面板不弹键盘（如任务编辑页） */
+    autoFocus: Boolean = true,
+    /** 大面板顶部距离屏幕上沿的间距（越小面板越高、越靠上） */
+    topGap: Dp = 60.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1235,7 +1241,7 @@ private fun KeyboardSheet(
                 // 紧凑模式：高度随内容，配合内层 imePadding 使面板整体贴在键盘正上方
                 .then(
                     if (compact) Modifier.wrapContentHeight()
-                    else Modifier.height(fullScreenH - 60.dp)
+                    else Modifier.height(fullScreenH - topGap)
                 )
                 .offset(y = panelOffsetY)
                 .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
@@ -1245,12 +1251,15 @@ private fun KeyboardSheet(
                 ) { /* 吃掉面板内点击，不关闭 */ }
         ) {
             // 出现即聚焦并拉起键盘（逐帧重试保证成功；一旦进入关闭流程立即停止，避免 show/hide 打架闪跳）
-            LaunchedEffect(Unit) {
-                repeat(40) {
-                    if (closing) return@LaunchedEffect
-                    focus.requestFocus()
-                    keyboard?.show()
-                    delay(16)
+            // autoFocus=false 时完全不碰焦点与键盘：打开面板保持键盘收起，用户点输入框才弹
+            if (autoFocus) {
+                LaunchedEffect(Unit) {
+                    repeat(40) {
+                        if (closing) return@LaunchedEffect
+                        focus.requestFocus()
+                        keyboard?.show()
+                        delay(16)
+                    }
                 }
             }
             // 键盘避让：imePadding 加在内部内容区 → 键盘升起时内容上移、面板盒子高度恒定不变；
@@ -1282,7 +1291,7 @@ private fun TaskEditSheet(
     onDismiss: () -> Unit,
     onRenameTask: (KanbanTask, String) -> Unit,
     onMoveTask: (KanbanTask, KanbanSection) -> Unit,
-    onAddSubtask: (KanbanTask, String) -> Unit,
+    onSetSubtasks: (KanbanTask, List<Pair<String, Boolean>>) -> Unit,
     onDelete: (KanbanTask) -> Unit,
     onSetNote: (KanbanTask, String) -> Unit,
     onSetDotColor: (Int) -> Unit
@@ -1292,29 +1301,32 @@ private fun TaskEditSheet(
     var moveSheetOpen by remember(task.id) { mutableStateOf(false) }
     // Add items 交互状态：0=收起 1=选项菜单(Note/Subtask) 2=备注输入 3=子任务输入
     var addItemState by remember(task.id) { mutableStateOf(0) }
-    // 子任务草稿行：每点一次「Add subtasks」追加一行，各行独立输入、可单独删除
-    val draftSubs = remember(task.id) { mutableStateListOf<DraftSub>() }
-    var draftSeq by remember(task.id) { mutableStateOf(0L) }
-    var autoFocusDraftId by remember(task.id) { mutableStateOf(-1L) }
+    // 子任务行列表：已有子任务（只读，key 为负）+ 本次新增的草稿行（可编辑，key 为正），
+    // 统一按显示顺序排列、整体可拖动排序
+    val subRows = remember(task.id) {
+        val initial = mutableStateListOf<SubRow>()
+        currentSection.subtasksOf(task).forEachIndexed { i, sub ->
+            initial.add(SubRow(-(i + 1).toLong(), sub, sub.text))
+        }
+        initial
+    }
+    var subKeySeq by remember(task.id) { mutableStateOf(0L) }
+    var autoFocusDraftKey by remember(task.id) { mutableStateOf(-1L) }
     var noteText by remember(task.id) { mutableStateOf(task.note) }
     val textFocus = remember { FocusRequester() }
     val noteFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
-    // 该任务已有的子任务（board 里缩进在父任务之下的任务行）
-    val existingSubs = currentSection.subtasksOf(task)
-
     // 追加一行空草稿并自动聚焦
     val addDraft: () -> Unit = {
-        val d = DraftSub(draftSeq++, "")
-        draftSubs.add(d)
-        autoFocusDraftId = d.id
+        subKeySeq += 1
+        val row = SubRow(subKeySeq, null, "")
+        subRows.add(row)
+        autoFocusDraftKey = row.key
     }
-    // 把所有非空草稿写入 board（逆序提交：addSubtask 每次插到父任务行下方，逆序可保持输入顺序）
-    val flushDrafts: () -> Unit = {
-        draftSubs.map { it.value.trim() }.filter { it.isNotEmpty() }.asReversed()
-            .forEach { onAddSubtask(task, it) }
-        draftSubs.clear()
+    // 把当前子任务列表（含顺序）整体写回 board
+    val flushSubs: () -> Unit = {
+        onSetSubtasks(task, subRows.map { it.value.trim() to (it.existing?.done ?: false) })
     }
 
     // "Add items" 入口行（未展开时、以及备注行下方共用）
@@ -1339,11 +1351,13 @@ private fun TaskEditSheet(
         }
     }
 
-    // 打开选择面板时收起键盘（面板落到底部）；从面板返回时恢复输入焦点与键盘
+    // 打开选择面板时收起键盘（面板落到底部）；从面板回来后恢复输入焦点（首次打开面板不弹键盘）
+    var movePanelOpened by remember(task.id) { mutableStateOf(false) }
     LaunchedEffect(moveSheetOpen) {
         if (moveSheetOpen) {
+            movePanelOpened = true
             repeat(24) { keyboard?.hide(); delay(16) }
-        } else {
+        } else if (movePanelOpened) {
             repeat(6) { textFocus.requestFocus(); keyboard?.show(); delay(16) }
         }
     }
@@ -1358,11 +1372,14 @@ private fun TaskEditSheet(
     // 键盘一体化面板：出现即拉起键盘，面板随键盘同步升起
     // contentPadding = 0：分割线需要通栏（左边缘到右边缘），水平内边距由各行自己控制
     KeyboardSheet(
-        // 关闭面板前先把草稿子任务落盘，避免输入内容丢失
-        onDismiss = { flushDrafts(); onDismiss() },
+        // 关闭面板前先把子任务列表落盘，避免输入内容丢失
+        onDismiss = { flushSubs(); onDismiss() },
         focus = textFocus,
         imeAutoClose = !moveSheetOpen,
         contentPadding = PaddingValues(0.dp),
+        // 打开编辑面板不弹键盘（点输入框才弹）；面板整体再上移 20dp（顶部间距 60 → 40）
+        autoFocus = false,
+        topGap = 40.dp,
         overlay = {
             if (moveSheetOpen) {
                 MoveToListPanel(
@@ -1482,14 +1499,18 @@ private fun TaskEditSheet(
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
             ) {
-            // 子任务区：已有子任务 + 正在输入的新子任务行 +「Add subtasks」按钮（每点一次多一行）
-            if (existingSubs.isNotEmpty() || draftSubs.isNotEmpty() || addItemState == 3) {
+            // 子任务区：已有子任务 + 新增草稿行（统一列表，可拖动排序）+「Add subtasks」按钮
+            if (subRows.isNotEmpty() || addItemState == 3) {
                 SubtaskSection(
-                    existing = existingSubs,
-                    drafts = draftSubs,
-                    autoFocusId = autoFocusDraftId,
+                    rows = subRows,
+                    autoFocusKey = autoFocusDraftKey,
                     onAdd = addDraft,
-                    onRemove = { d -> draftSubs.remove(d) }
+                    onRemove = { row -> subRows.remove(row) },
+                    onMove = { from, to ->
+                        if (from != to && from in subRows.indices && to in subRows.indices) {
+                            subRows.add(to, subRows.removeAt(from))
+                        }
+                    }
                 )
                 HorizontalDivider(color = WuDivider, thickness = 1.dp)
             }
@@ -1617,8 +1638,8 @@ private fun TaskEditSheet(
                 FloatingActionButton(
                     onClick = {
                         onRenameTask(task, text.toSingleLineTaskText())
-                        // 保存前先把草稿子任务落盘
-                        flushDrafts()
+                        // 保存前先把子任务列表落盘
+                        flushSubs()
                         onDismiss()
                     },
                     containerColor = WuFab,
@@ -1632,8 +1653,11 @@ private fun TaskEditSheet(
     }
 }
 
-/** 任务编辑面板里正在输入的子任务草稿行（独立输入，可单独删除） */
-private class DraftSub(val id: Long, value: String) {
+/**
+ * 任务编辑面板里的一行子任务。
+ * [existing] != null 表示来自 board 的已有子任务（只读文本）；为 null 表示本次新增的草稿行（可编辑、可删除）。
+ */
+private class SubRow(val key: Long, val existing: KanbanTask?, value: String) {
     var value by mutableStateOf(value)
 }
 
@@ -1689,17 +1713,23 @@ private fun KanbanSection.subtaskProgress(task: KanbanTask): Pair<Int, Int> {
 }
 
 /**
- * 子任务区：列出该任务已有的子任务 + 正在输入的草稿行 +「Add subtasks」按钮。
- * 每点一次按钮就追加一行草稿（各行独立输入、右侧 ✕ 可删除该行）。
+ * 子任务区：统一列出「已有子任务（只读）+ 新增草稿行（可编辑）」，
+ * 每行右侧是拖动排序手柄（≡），按住上下拖动即可调整顺序；
+ * 底部是「Add subtasks」按钮（每点一次追加一行草稿）。
  */
 @Composable
 private fun SubtaskSection(
-    existing: List<KanbanTask>,
-    drafts: List<DraftSub>,
-    autoFocusId: Long,
+    rows: List<SubRow>,
+    autoFocusKey: Long,
     onAdd: () -> Unit,
-    onRemove: (DraftSub) -> Unit
+    onRemove: (SubRow) -> Unit,
+    onMove: (Int, Int) -> Unit
 ) {
+    // 各行高度（拖动时按"越过相邻行中线即交换"的模型计算）
+    val rowHeights = remember { mutableStateMapOf<Long, Float>() }
+    var dragKey by remember { mutableStateOf<Long?>(null) }
+    var dragDy by remember { mutableFloatStateOf(0f) }
+
     Row(
         verticalAlignment = Alignment.Top,
         modifier = Modifier
@@ -1718,40 +1748,23 @@ private fun SubtaskSection(
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            // 已有子任务：只读展示（来自 board，缩进在父任务之下）
-            existing.forEach { sub ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 10.dp)
-                ) {
-                    Icon(
-                        Icons.Outlined.RadioButtonUnchecked,
-                        contentDescription = null,
-                        tint = WuSubtle,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        sub.text,
-                        fontSize = 15.sp,
-                        color = WuTitle,
-                        lineHeight = 22.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-            // 新子任务草稿行：多行输入 + 右侧 ✕ 删除该行
-            drafts.forEach { d ->
-                key(d.id) {
+            rows.forEach { row ->
+                key(row.key) {
+                    val dragging = dragKey == row.key
                     val fr = remember { FocusRequester() }
-                    LaunchedEffect(autoFocusId, d.id) {
-                        if (autoFocusId == d.id) fr.requestFocus()
+                    LaunchedEffect(autoFocusKey, row.key) {
+                        if (autoFocusKey == row.key) fr.requestFocus()
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .zIndex(if (dragging) 1f else 0f)
+                            .graphicsLayer { translationY = if (dragging) dragDy else 0f }
+                            .onGloballyPositioned { c ->
+                                rowHeights[row.key] = c.size.height.toFloat()
+                            }
+                            .padding(vertical = 8.dp)
                     ) {
                         Icon(
                             Icons.Outlined.RadioButtonUnchecked,
@@ -1760,39 +1773,102 @@ private fun SubtaskSection(
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(Modifier.width(12.dp))
-                        TextField(
-                            value = d.value,
-                            onValueChange = { d.value = it },
-                            placeholder = { Text("Subtask", color = WuSubtle, fontSize = 15.sp) },
-                            // 多行：自动换行、随内容增高（最多 5 行，超出后框内滚动）
-                            singleLine = false,
-                            minLines = 1,
-                            maxLines = 5,
-                            textStyle = TextStyle(
+                        if (row.existing != null) {
+                            // 已有子任务：只读文本
+                            Text(
+                                text = row.value,
                                 fontSize = 15.sp,
                                 color = WuTitle,
-                                lineHeight = 22.sp
-                            ),
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                cursorColor = WuAccent
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .focusRequester(fr)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        IconButton(onClick = { onRemove(d) }) {
-                            Icon(
-                                Icons.Outlined.Close,
-                                contentDescription = "删除该子任务行",
-                                tint = WuSubtle,
-                                modifier = Modifier.size(20.dp)
+                                lineHeight = 22.sp,
+                                modifier = Modifier.weight(1f)
                             )
+                        } else {
+                            // 新增草稿行：多行输入 + 右侧 ✕ 删除该行
+                            TextField(
+                                value = row.value,
+                                onValueChange = { row.value = it },
+                                placeholder = { Text("Subtask", color = WuSubtle, fontSize = 15.sp) },
+                                // 多行：自动换行、随内容增高（最多 5 行，超出后框内滚动）
+                                singleLine = false,
+                                minLines = 1,
+                                maxLines = 5,
+                                textStyle = TextStyle(
+                                    fontSize = 15.sp,
+                                    color = WuTitle,
+                                    lineHeight = 22.sp
+                                ),
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent,
+                                    cursorColor = WuAccent
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .focusRequester(fr)
+                            )
+                            IconButton(onClick = { onRemove(row) }) {
+                                Icon(
+                                    Icons.Outlined.Close,
+                                    contentDescription = "删除该子任务行",
+                                    tint = WuSubtle,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
+                        // 拖动排序手柄：按住上下拖动调整子任务顺序
+                        Icon(
+                            Icons.Filled.DragHandle,
+                            contentDescription = "拖动排序",
+                            tint = WuSubtle,
+                            modifier = Modifier
+                                .padding(start = 8.dp)
+                                .size(22.dp)
+                                .pointerInput(row.key) {
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            dragKey = row.key
+                                            dragDy = 0f
+                                        },
+                                        onDragEnd = {
+                                            dragKey = null
+                                            dragDy = 0f
+                                        },
+                                        onDragCancel = {
+                                            dragKey = null
+                                            dragDy = 0f
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragDy += amount.y
+                                            // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
+                                            var guard = 0
+                                            while (guard++ < 20) {
+                                                val i = rows.indexOfFirst { it.key == row.key }
+                                                if (i < 0) break
+                                                if (dragDy > 0f && i < rows.size - 1) {
+                                                    val nh = rowHeights[rows[i + 1].key] ?: 0f
+                                                    if (nh > 0f && dragDy > nh / 2f) {
+                                                        onMove(i, i + 1)
+                                                        dragDy -= nh
+                                                        continue
+                                                    }
+                                                }
+                                                if (dragDy < 0f && i > 0) {
+                                                    val ph = rowHeights[rows[i - 1].key] ?: 0f
+                                                    if (ph > 0f && -dragDy > ph / 2f) {
+                                                        onMove(i, i - 1)
+                                                        dragDy += ph
+                                                        continue
+                                                    }
+                                                }
+                                                break
+                                            }
+                                        }
+                                    )
+                                }
+                        )
                     }
                 }
             }
@@ -2159,18 +2235,11 @@ private fun SectionCard(
             if (section.tasks.isNotEmpty()) {
                 Spacer(Modifier.height(14.dp))
                 // 未完成在前、完成在底部（稳定排序保持原有相对顺序）
-                // 子任务不展开：只列出顶层任务，子任务数以计数形式挂在任务下方
+                // 子任务不展开：只列出顶层任务（主界面不显示子任务计数）
                 section.topLevelTasks()
                     .sortedBy { it.done }
                     .forEach { task ->
-                        val (subDone, subTotal) = section.subtaskProgress(task)
-                        TaskRow(
-                            task = task,
-                            subtaskDone = subDone,
-                            subtaskTotal = subTotal,
-                            onToggle = onToggle,
-                            onOpen = onOpen
-                        )
+                        TaskRow(task = task, onToggle = onToggle, onOpen = onOpen)
                     }
             }
         }
@@ -2181,67 +2250,40 @@ private fun SectionCard(
 @Composable
 private fun TaskRow(
     task: KanbanTask,
-    subtaskDone: Int,
-    subtaskTotal: Int,
     onToggle: (KanbanTask) -> Unit,
     onOpen: () -> Unit
 ) {
     Row(
-        // 顶部对齐：任务文字可能换行，且下方还会跟一行子任务计数
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onOpen() }
             .padding(start = (task.indent * 10).dp, top = 3.dp, bottom = 3.dp)
     ) {
-        // 圆圈/对勾与第一行文字大致居中对齐（文字行高 18sp ≈ 22dp，圆圈 14dp）
-        Box(modifier = Modifier.padding(top = 4.dp)) {
-            if (task.done) {
-                // 已完成：只显示勾（灰色），不带复选框圆圈（仍可点击切换回未完成）
-                Icon(
-                    imageVector = Icons.Filled.Check,
-                    contentDescription = null,
-                    tint = WuDoneGrey,
-                    modifier = Modifier
-                        .size(15.dp)
-                        .clickable { onToggle(task) }
-                )
-            } else {
-                CheckCircle(done = false, size = 14.dp, onClick = { onToggle(task) })
-            }
+        if (task.done) {
+            // 已完成：只显示勾（灰色），不带复选框圆圈（仍可点击切换回未完成）
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = WuDoneGrey,
+                modifier = Modifier
+                    .size(15.dp)
+                    .clickable { onToggle(task) }
+            )
+        } else {
+            CheckCircle(done = false, size = 14.dp, onClick = { onToggle(task) })
         }
         Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = task.text,
-                fontSize = 13.sp,
-                color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
-                textDecoration = if (task.done) TextDecoration.LineThrough else null,
-                lineHeight = 18.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            // 子任务不展开，只显示「图标 + 已完成数/总数」
-            if (subtaskTotal > 0) {
-                Spacer(Modifier.height(3.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Outlined.FormatListBulleted,
-                        contentDescription = null,
-                        tint = WuSubtle,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "$subtaskDone/$subtaskTotal",
-                        fontSize = 12.sp,
-                        color = WuSubtle,
-                        lineHeight = 14.sp
-                    )
-                }
-            }
-        }
+        Text(
+            text = task.text,
+            fontSize = 13.sp,
+            color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
+            textDecoration = if (task.done) TextDecoration.LineThrough else null,
+            lineHeight = 18.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

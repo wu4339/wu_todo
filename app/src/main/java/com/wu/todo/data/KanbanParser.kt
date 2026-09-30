@@ -265,6 +265,40 @@ object KanbanParser {
     }
 
     /**
+     * 整体替换某任务的子任务列表（含顺序调整）：先删掉父任务下方紧邻的缩进子任务行，
+     * 再按 [subs] 的顺序依次写入（第二项为是否已完成）。备注行不受影响。
+     */
+    fun replaceSubtasks(
+        lines: List<String>,
+        task: KanbanTask,
+        subs: List<Pair<String, Boolean>>
+    ): List<String> {
+        val idx = task.lineIndex
+        if (idx !in lines.indices) return lines
+        if (TASK_RE.find(lines[idx]) == null) return lines
+
+        val baseIndent = lines[idx].takeWhile { it == ' ' || it == '\t' }
+        val result = ArrayList(lines)
+        // 删除父任务下方、缩进更深的已有子任务行（备注行保留，且不影响其顺序）
+        var i = idx + 1
+        while (i < result.size) {
+            val ln = result[i]
+            val ind = ln.takeWhile { it == ' ' || it == '\t' }
+            // 回到同级/更浅层级 → 本任务的子任务区结束
+            if (ind.length <= baseIndent.length) break
+            if (TASK_RE.find(ln) != null) result.removeAt(i) else i++
+        }
+        // 按新顺序写回
+        val subIndent = baseIndent + "    "
+        val inserts = subs.mapNotNull { (t, done) ->
+            t.trim().takeIf { it.isNotEmpty() }
+                ?.let { "$subIndent- [${if (done) "x" else " "}] $it" }
+        }
+        result.addAll(idx + 1, inserts)
+        return result
+    }
+
+    /**
      * 重排某一列内的任务顺序（长按拖动排序）。
      *
      * [orderedTaskLineIndexes] 为「按原始行号标识的当前顺序」——即拖动前每个顶层任务所在的行号，

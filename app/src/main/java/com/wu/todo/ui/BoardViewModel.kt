@@ -217,6 +217,20 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /** 整体替换某任务的子任务列表（含拖动排序后的新顺序）并写回 .md */
+    fun replaceSubtasks(task: KanbanTask, subs: List<Pair<String, Boolean>>) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+
+        val newLines = KanbanParser.replaceSubtasks(cur.lines, task, subs)
+        if (newLines == cur.lines) return
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
     /** 设置任务备注（任务行下方的缩进普通文本行）并写回 .md，text 为空则清除备注 */
     fun setNote(task: KanbanTask, text: String) {
         val cur = state.value
