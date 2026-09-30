@@ -333,8 +333,8 @@ fun BoardScreen(
                 ) {
                     LazyVerticalStaggeredGrid(
                         columns = StaggeredGridCells.Fixed(2),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalItemSpacing = 12.dp,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalItemSpacing = 8.dp,
                         contentPadding = PaddingValues(
                             start = 12.dp,
                             end = 12.dp,
@@ -1260,13 +1260,16 @@ private fun SectionCard(
                     color = WuTitle
                 )
             }
-            Spacer(Modifier.height(14.dp))
-            // 未完成在前、完成在底部（稳定排序保持原有相对顺序）；空任务时不显示占位文字
-            section.tasks
-                .sortedBy { it.done }
-                .forEach { task ->
-                    TaskRow(task = task, onToggle = onToggle, onOpen = onOpen)
-                }
+            // 空任务时不再留标题下方的空隙，卡片高度随之收紧
+            if (section.tasks.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                // 未完成在前、完成在底部（稳定排序保持原有相对顺序）
+                section.tasks
+                    .sortedBy { it.done }
+                    .forEach { task ->
+                        TaskRow(task = task, onToggle = onToggle, onOpen = onOpen)
+                    }
+            }
         }
     }
 }
