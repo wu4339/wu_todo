@@ -155,6 +155,11 @@ import kotlinx.coroutines.launch
 /** 用「列头行号」作为一列的唯一 key，重命名标题后 key 不变，详情页不会跳回总览 */
 private fun KanbanSection.uniqueKey() = "col@${headerLineIndex}"
 
+/** 输入框允许多行（自动换行展示），但 Obsidian Kanban 一条任务只占一行 markdown，
+ *  因此写入前把换行/制表符折叠为空格，避免破坏 board 结构 */
+private fun String.toSingleLineTaskText(): String =
+    trim().replace(Regex("[\\r\\n\\t]+"), " ")
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BoardScreen(
@@ -894,7 +899,11 @@ private fun SectionDetailScreen(
                     value = newTaskText,
                     onValueChange = { newTaskText = it },
                     placeholder = { Text("new task", color = WuSubtle, fontSize = 16.sp) },
-                    singleLine = true,
+                    // 多行输入：长文本自动换行、输入框随内容增高（最多 4 行，超出后框内滚动）
+                    singleLine = false,
+                    minLines = 1,
+                    maxLines = 4,
+                    textStyle = TextStyle(fontSize = 16.sp, color = WuTitle),
                     shape = RoundedCornerShape(12.dp),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.White,
@@ -905,7 +914,7 @@ private fun SectionDetailScreen(
                     ),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = {
-                        onAdd(newTaskText)
+                        onAdd(newTaskText.toSingleLineTaskText())
                         newTaskText = ""
                         showAddSheet = false
                     }),
@@ -915,7 +924,7 @@ private fun SectionDetailScreen(
                 )
                 IconButton(
                     onClick = {
-                        onAdd(newTaskText)
+                        onAdd(newTaskText.toSingleLineTaskText())
                         newTaskText = ""
                         showAddSheet = false
                     }
@@ -1312,7 +1321,10 @@ private fun TaskEditSheet(
                     value = text,
                     onValueChange = { text = it },
                     placeholder = { Text("任务内容", color = WuSubtle, fontSize = 20.sp) },
-                    singleLine = true,
+                    // 多行输入：长任务自动换行、输入框随内容增高（最多 3 行，超出后框内滚动）
+                    singleLine = false,
+                    minLines = 1,
+                    maxLines = 3,
                     textStyle = TextStyle(
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
@@ -1508,7 +1520,7 @@ private fun TaskEditSheet(
             ) {
                 FloatingActionButton(
                     onClick = {
-                        onRenameTask(task, text)
+                        onRenameTask(task, text.toSingleLineTaskText())
                         onDismiss()
                     },
                     containerColor = WuFab,
