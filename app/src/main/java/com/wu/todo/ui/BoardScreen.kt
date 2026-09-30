@@ -1220,13 +1220,12 @@ private fun SectionCard(
                 )
             }
             Spacer(Modifier.height(14.dp))
-            if (section.tasks.isEmpty()) {
-                Text("（无任务）", color = WuSubtle, fontSize = 12.sp)
-            } else {
-                section.tasks.forEach { task ->
+            // 未完成在前、完成在底部（稳定排序保持原有相对顺序）；空任务时不显示占位文字
+            section.tasks
+                .sortedBy { it.done }
+                .forEach { task ->
                     TaskRow(task = task, onToggle = onToggle, onOpen = onOpen)
                 }
-            }
         }
     }
 }
@@ -1246,7 +1245,19 @@ private fun TaskRow(
             .clickable { onOpen() }
             .padding(start = (task.indent * 10).dp, top = 3.dp, bottom = 3.dp)
     ) {
-        CheckCircle(done = task.done, size = 14.dp, onClick = { onToggle(task) })
+        if (task.done) {
+            // 已完成：只显示勾，不带复选框圆圈（仍可点击切换回未完成）
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = WuAccent,
+                modifier = Modifier
+                    .size(15.dp)
+                    .clickable { onToggle(task) }
+            )
+        } else {
+            CheckCircle(done = false, size = 14.dp, onClick = { onToggle(task) })
+        }
         Spacer(Modifier.width(10.dp))
         Text(
             text = task.text,
