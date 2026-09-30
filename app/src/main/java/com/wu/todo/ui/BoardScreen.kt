@@ -180,6 +180,11 @@ fun BoardScreen(
         return
     }
 
+    // 抽屉打开时：系统返回（侧滑返回）先关闭抽屉，而不是退出应用
+    if (drawerState.isOpen) {
+        BackHandler { scope.launch { drawerState.close() } }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -214,27 +219,21 @@ fun BoardScreen(
                     }
                 },
                 title = {
-                    Column {
-                        Text(
-                            text = "wu_todo",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = WuAccent
-                        )
-                        if (state.fileName != null) {
-                            val sub = buildString {
-                                append(state.fileName)
-                                if (state.totalTasks > 0) append(" · 已完成 ${state.doneTasks}/${state.totalTasks}")
-                                if (state.readOnly) append(" · 只读")
-                            }
-                            Text(
-                                text = sub,
-                                fontSize = 11.sp,
-                                color = WuSubtle,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                    // 不再显示应用名 wu_todo，只显示当前文件与完成进度
+                    if (state.fileName != null) {
+                        val sub = buildString {
+                            append(state.fileName)
+                            if (state.totalTasks > 0) append(" · 已完成 ${state.doneTasks}/${state.totalTasks}")
+                            if (state.readOnly) append(" · 只读")
                         }
+                        Text(
+                            text = sub,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = WuTitle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 },
                 actions = {
@@ -404,7 +403,8 @@ private fun SectionDetailScreen(
     var titleDraft by remember(section.uniqueKey()) { mutableStateOf(section.title) }
 
     // 系统返回键/手势：回到看板主界面（编辑标题时先退出编辑）
-    BackHandler {
+    // 添加任务/编辑任务窗口打开时禁用此回调，由 KeyboardSheet 自己的 BackHandler 处理返回（只关窗口）
+    BackHandler(enabled = !showAddSheet && editingTask == null) {
         if (editingTitle) {
             editingTitle = false
             titleDraft = section.title
