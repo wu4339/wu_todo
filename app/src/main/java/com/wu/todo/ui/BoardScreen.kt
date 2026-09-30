@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -148,6 +149,7 @@ import com.wu.todo.ui.theme.WuFab
 import com.wu.todo.ui.theme.WuSubtle
 import com.wu.todo.ui.theme.WuTaskText
 import com.wu.todo.ui.theme.WuTitle
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -1128,27 +1130,44 @@ private fun KeyboardSheet(
     // 优雅关闭流程：closing=true 后 → 停止拉键盘循环 + 收起键盘 + 面板下滑出屏 + 遮罩淡出，
     // 三者同步进行（约 320ms），动画结束后才真正卸载面板——彻底消除"瞬间消失"闪跳
     var closing by remember { mutableStateOf(false) }
-    val close = {
+    val scope = rememberCoroutineScope()
+    // pAnim：0=完全展开贴底，1=完全下滑出屏。进入/关闭/侧滑共用同一条动画源，
+    // 彻底杜绝"进入动画 / 关闭动画 / 系统默认返回动画"多源打架导致的抖动与跳变
+    val pAnim = remember { Animatable(1f) }
+    val requestClose: () -> Unit = {
         if (!closing) {
             closing = true
             keyboard?.hide()
-        }
-    }
-    // 关闭动画结束后才移除面板（此前面板保持组合，跟随键盘一起降下去）
-    LaunchedEffect(closing) {
-        if (closing) {
-            delay(340)
-            onDismiss()
+            scope.launch {
+                pAnim.animateTo(1f, tween(320))
+                onDismiss()
+            }
         }
     }
     // 面板从组合移除时（Done/保存等直接关闭路径）兜底收起键盘
     DisposableEffect(Unit) {
         onDispose { keyboard?.hide() }
     }
-    // 侧滑返回：手势一完成即走优雅关闭（predictive back 协议，拖一半松手=取消不关闭）
+    // 进入动画：面板首次出现时从屏幕底部滑入（1→0），遮罩同步淡入
+    LaunchedEffect(Unit) {
+        pAnim.snapTo(1f)
+        pAnim.animateTo(0f, tween(320))
+    }
+    // 侧滑返回（predictive back）：手势过程中把面板偏移直接绑定到手势进度，跟手且消除抖动
+    // （消费 progress 后系统不再叠加默认返回动画）；松手 commit → 从当前位置继续下滑关闭，
+    // 松手 cancel → 平滑回弹归位（拖一半松手=取消不关闭）
     PredictiveBackHandler { flow ->
-        flow.collect { }
-        close()
+        try {
+            flow.collect { event ->
+                val p = event.progress.coerceIn(0f, 1f)
+                pAnim.snapTo(p)
+            }
+            // 手势提交：从当前进度继续滑到底
+            requestClose()
+        } catch (e: CancellationException) {
+            // 手势取消：回弹归位
+            scope.launch { pAnim.animateTo(0f, tween(220)) }
+        }
     }
     // 一次侧滑即退出：键盘可见时，第一次侧滑返回会被输入法消费（只收键盘，app 收不到 back）。
     // 监听键盘从可见变为隐藏——若是系统收起的（不是本组件主动 close），面板同步走优雅关闭，
@@ -1164,34 +1183,15 @@ private fun KeyboardSheet(
                 if (visible) {
                     imeSeen = true
                 } else if (imeSeen && !closing && autoClose) {
-                    closing = true
+                    requestClose()
                 }
             }
     }
-    // 进入动画：面板首次出现时从屏幕底部滑入（entered 由 false→true）
-    var entered by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { entered = true }
     val fullScreenH = LocalConfiguration.current.screenHeightDp.dp
-    // 遮罩淡入淡出（进入淡入，关闭淡出）
-    val scrimAlpha by animateFloatAsState(
-        targetValue = if (closing) 0f else if (entered) 0.32f else 0f,
-        animationSpec = tween(280),
-        label = "scrim"
-    )
-    // 面板滑入：从底部滑入屏幕
-    val enterOffsetY by animateDpAsState(
-        targetValue = if (entered) 0.dp else fullScreenH,
-        animationSpec = tween(320),
-        label = "panelEnter"
-    )
-    // 面板整体下滑出屏（与键盘收起同步，键盘和输入框一起降下去）
-    val exitOffsetY by animateDpAsState(
-        targetValue = if (closing) fullScreenH else 0.dp,
-        animationSpec = tween(320),
-        label = "panelExit"
-    )
-    // 关闭优先走下滑动画，否则走进入的滑入动画
-    val panelOffsetY = if (closing) exitOffsetY else enterOffsetY
+    // 遮罩透明度随面板下潜进度联动（与面板同一条动画源，天然同步，无独立动画源）
+    val scrimAlpha = 0.32f * (1f - pAnim.value.coerceIn(0f, 1f))
+    // 面板整体偏移：进入/关闭/侧滑都走 pAnim，单一动画源
+    val panelOffsetY = fullScreenH * pAnim.value
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1199,7 +1199,7 @@ private fun KeyboardSheet(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
-            ) { close() }
+            ) { requestClose() }
     ) {
         Column(
             modifier = Modifier
