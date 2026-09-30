@@ -78,6 +78,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -711,11 +712,12 @@ private fun SectionDetailScreen(
             containerColor = WuCard,
             sheetState = addSheetState
         ) {
-            // 等面板展开动画结束再请求焦点，否则焦点被动画吞掉、软键盘不弹
+            // 先等窗口完全展开到最高位置，再聚焦输入框并弹出软键盘
+            // （先窗口、后键盘，避免键盘在面板还在半路时就抢先弹出）
             LaunchedEffect(Unit) {
-                delay(320)
+                while (addSheetState.currentValue != SheetValue.Expanded) delay(16)
+                delay(160)
                 addFocus.requestFocus()
-                delay(60)
                 keyboard?.show()
             }
             Row(
@@ -799,9 +801,12 @@ private fun TaskEditSheet(
     var showSubInput by remember { mutableStateOf(false) }
     var subText by remember { mutableStateOf("") }
 
+    // skipPartiallyExpanded=true：直接展开到内容最高位（0.72f 屏高），不再先停在半屏让用户上滑
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = WuCard
+        containerColor = WuCard,
+        sheetState = sheetState
     ) {
         Column(
             modifier = Modifier
@@ -1320,11 +1325,12 @@ private fun AddListSheet(
         containerColor = WuCard,
         sheetState = sheetState
     ) {
-        // 面板展开后自动聚焦名称输入框并弹出软键盘
+        // 先等窗口完全展开到最高位置，再聚焦名称输入框并弹出软键盘
+        // （先窗口、后键盘，避免键盘在面板还在半路时就抢先弹出）
         LaunchedEffect(Unit) {
-            delay(320)
+            while (sheetState.currentValue != SheetValue.Expanded) delay(16)
+            delay(160)
             titleFocus.requestFocus()
-            delay(60)
             keyboard?.show()
         }
         Column(
