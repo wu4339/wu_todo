@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
@@ -882,12 +883,12 @@ private fun SectionDetailScreen(
     // 底部弹出：新建任务输入条（输入 + 右侧加号提交）
     if (showAddSheet) {
         val addFocus = remember { FocusRequester() }
-        KeyboardSheet(onDismiss = { showAddSheet = false }, focus = addFocus) {
+        KeyboardSheet(onDismiss = { showAddSheet = false }, focus = addFocus, compact = true) {
+            // 紧凑面板：只有一条输入框，贴在键盘正上方（水平 padding 由 KeyboardSheet 统一提供）
+            Spacer(Modifier.height(8.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
                 TextField(
                     value = newTaskText,
@@ -927,7 +928,7 @@ private fun SectionDetailScreen(
                     )
                 }
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
         }
     }
 
@@ -1108,7 +1109,8 @@ private fun EditSectionSheet(
     }
 }
 
-/** 键盘一体化底部面板：无滑入动画，出现即拉起键盘；imePadding 让面板骑在键盘上逐帧同步升起 */
+/** 键盘一体化底部面板：出现即拉起键盘，从底部滑入；关闭统一走 requestClose（单一下滑动画）。
+ *  compact=false（默认）：大面板，顶部固定离屏顶 60dp；compact=true：高度随内容，贴在键盘正上方 */
 @Composable
 private fun KeyboardSheet(
     focus: FocusRequester,
@@ -1118,6 +1120,9 @@ private fun KeyboardSheet(
     overlay: (@Composable BoxScope.() -> Unit)? = null,
     /** 键盘被系统收起时是否联动关闭面板（打开内部浮层时需临时关掉） */
     imeAutoClose: Boolean = true,
+    /** 紧凑模式：面板高度随内容自适应，整体贴在键盘上方（如"新建任务"输入条）；
+     *  默认 false = 大面板，顶部固定离屏顶 60dp */
+    compact: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1188,8 +1193,12 @@ private fun KeyboardSheet(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                // 面板总高恒定 = 屏高 - 60dp：顶部恒离屏顶 60dp，且不随键盘升降重排（消除收键盘时的抖动）
-                .height(fullScreenH - 60.dp)
+                // 大面板：总高恒定 = 屏高 - 60dp（顶部恒离屏顶 60dp，不随键盘升降重排）；
+                // 紧凑模式：高度随内容，配合内层 imePadding 使面板整体贴在键盘正上方
+                .then(
+                    if (compact) Modifier.wrapContentHeight()
+                    else Modifier.height(fullScreenH - 60.dp)
+                )
                 .offset(y = panelOffsetY)
                 .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                 .clickable(
@@ -1206,10 +1215,11 @@ private fun KeyboardSheet(
                     delay(16)
                 }
             }
-            // 键盘避让：imePadding 加在内部内容区，键盘升起时内容上移、面板盒子高度恒定不变
+            // 键盘避让：imePadding 加在内部内容区 → 键盘升起时内容上移、面板盒子高度恒定不变；
+            // 紧凑模式下内层改为随内容高度（用 fillMaxSize 会撑满整屏，面板又变回大面板）
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .then(if (compact) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
                     .imePadding()
                     .padding(horizontal = 20.dp)
             ) {
