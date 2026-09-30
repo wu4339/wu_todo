@@ -92,6 +92,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -854,6 +855,22 @@ private fun KeyboardSheet(
         flow.collect { }
         close()
     }
+    // 一次侧滑即退出：键盘可见时，第一次侧滑返回会被输入法消费（只收键盘，app 收不到 back）。
+    // 监听键盘从可见变为隐藏——若是系统收起的（不是本组件主动 close），面板同步走优雅关闭，
+    // 与收起的键盘一起降下去，用户无需再滑第二次
+    val imeInsets = WindowInsets.ime  // 组合期取值（@Composable 属性不能在协程内读取）
+    val density = LocalDensity.current
+    var imeSeen by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { imeInsets.getBottom(density) > 0 }
+            .collect { visible ->
+                if (visible) {
+                    imeSeen = true
+                } else if (imeSeen && !closing) {
+                    closing = true
+                }
+            }
+    }
     // 遮罩淡出
     val scrimAlpha by animateFloatAsState(
         targetValue = if (closing) 0f else 0.32f,
@@ -925,7 +942,7 @@ private fun TaskEditSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height((LocalConfiguration.current.screenHeightDp * 0.72f).dp)
+                // 高度随内容自适应：固定 72% 屏高会被键盘顶出屏幕，导致顶部删除按钮不可见
                 .padding(horizontal = 20.dp)
         ) {
             // 顶部：右上角删除按钮
@@ -1063,9 +1080,8 @@ private fun TaskEditSheet(
                     }
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            Spacer(Modifier.weight(1f))
-            // 右下角黄色对勾：保存文本修改（贴底）
+            Spacer(Modifier.height(16.dp))
+            // 右下角黄色对勾：保存文本修改（紧跟内容，面板高度自适应）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
