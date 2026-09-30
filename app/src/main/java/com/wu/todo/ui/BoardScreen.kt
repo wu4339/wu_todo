@@ -1071,15 +1071,30 @@ private fun TaskEditSheet(
     var addItemState by remember(task.id) { mutableStateOf(0) }
     var subText by remember { mutableStateOf("") }
     var noteText by remember(task.id) { mutableStateOf(task.note) }
-    var paletteOpen by remember { mutableStateOf(false) }
     val textFocus = remember { FocusRequester() }
+    val noteFocus = remember { FocusRequester() }
+    val subFocus = remember { FocusRequester() }
+
+    // 面板高度 = 屏高 - 键盘高度 - 40dp：顶部始终离屏幕顶约 40dp，底部随键盘同步
+    val density = LocalDensity.current
+    val imeDp = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+    val screenH = LocalConfiguration.current.screenHeightDp.dp
+
+    // 选 Note / Subtask 后：光标自动聚焦到对应输入框（持续抢焦点，覆盖面板初始拉焦循环）
+    LaunchedEffect(addItemState) {
+        when (addItemState) {
+            2 -> repeat(45) { noteFocus.requestFocus(); delay(16) }
+            3 -> repeat(45) { subFocus.requestFocus(); delay(16) }
+        }
+    }
 
     // 键盘一体化面板：出现即拉起键盘，面板随键盘同步升起
     KeyboardSheet(onDismiss = onDismiss, focus = textFocus) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // 高度随内容自适应：固定 72% 屏高会被键盘顶出屏幕，导致顶部删除按钮不可见
+                // 面板增高：顶部离屏幕顶约 40dp（高度随键盘动态），保存按钮沉底
+                .height(screenH - imeDp - 40.dp)
                 .padding(horizontal = 20.dp)
         ) {
             // 顶部：右上角删除按钮
@@ -1115,65 +1130,6 @@ private fun TaskEditSheet(
                     .fillMaxWidth()
                     .focusRequester(textFocus)
             )
-            HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            // 调色板行：点击调色板图标展开/收起颜色网格，点选即换列颜色
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 12.dp)
-            ) {
-                Icon(
-                    Icons.Outlined.Palette,
-                    contentDescription = "调色板",
-                    tint = WuSubtle,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .clickable { paletteOpen = !paletteOpen }
-                )
-                Spacer(Modifier.width(18.dp))
-                Box(
-                    modifier = Modifier
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .background(dotColor)
-                        .clickable { paletteOpen = !paletteOpen }
-                )
-            }
-            if (paletteOpen) {
-                // 颜色网格：每行 8 个，当前颜色带白色对勾，点选后收起
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier.padding(bottom = 14.dp)
-                ) {
-                    ListPalette.chunked(8).forEach { rowColors ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-                            rowColors.forEach { c ->
-                                val selected = c == dotColor.toArgb().toLong()
-                                Box(
-                                    modifier = Modifier
-                                        .size(26.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(c.toInt()))
-                                        .clickable {
-                                            onSetDotColor(c.toInt())
-                                            paletteOpen = false
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (selected) {
-                                        Icon(
-                                            Icons.Filled.Check,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
             // 移动到其他列
             Row(
@@ -1315,7 +1271,7 @@ private fun TaskEditSheet(
                                 unfocusedIndicatorColor = Color.Transparent,
                                 cursorColor = WuAccent
                             ),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f).focusRequester(noteFocus)
                         )
                         IconButton(onClick = {
                             onSetNote(task, noteText)
@@ -1346,7 +1302,7 @@ private fun TaskEditSheet(
                                 unfocusedIndicatorColor = Color.Transparent,
                                 cursorColor = WuAccent
                             ),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f).focusRequester(subFocus)
                         )
                         IconButton(onClick = {
                             onAddSubtask(task, subText)
@@ -1358,8 +1314,8 @@ private fun TaskEditSheet(
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            // 右下角黄色对勾：保存文本修改（紧跟内容，面板高度自适应）
+            Spacer(Modifier.weight(1f))
+            // 右下角黄色对勾：保存文本修改（沉底）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
