@@ -856,9 +856,11 @@ private fun KeyboardSheet(
                     indication = null
                 ) { /* 吃掉面板内点击，不关闭 */ }
         ) {
-            // 出现即聚焦并拉起键盘（与面板同时出现，逐帧重试保证成功）
+            // 出现即聚焦并拉起键盘（与面板同时出现，逐帧重试保证成功）；
+            // close 之后立即停止重试，否则键盘会被重新拉起造成闪跳
             LaunchedEffect(Unit) {
                 repeat(40) {
+                    if (closing) return@LaunchedEffect
                     focus.requestFocus()
                     keyboard?.show()
                     delay(16)
