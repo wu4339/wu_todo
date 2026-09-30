@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
@@ -270,8 +271,12 @@ fun BoardScreen(
                     }
                 }
             )
-            // 顶栏与看板内容（Pinned 区）之间的分割线
-            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            // 顶栏与看板内容（Pinned 区）之间的分割线（上移 4dp、颜色更淡）
+            HorizontalDivider(
+                color = Color(0xFFECECEC),
+                thickness = 1.dp,
+                modifier = Modifier.offset(y = (-4).dp)
+            )
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -561,8 +566,12 @@ private fun SectionDetailScreen(
                     }
                 }
             )
-            // 顶栏与列表标题之间的分割线
-            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            // 顶栏与列表标题之间的分割线（上移 4dp、颜色更淡）
+            HorizontalDivider(
+                color = Color(0xFFECECEC),
+                thickness = 1.dp,
+                modifier = Modifier.offset(y = (-4).dp)
+            )
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -817,27 +826,11 @@ private fun KeyboardSheet(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
-    val density = LocalDensity.current
-    val imeInsets = WindowInsets.ime
-    val scope = rememberCoroutineScope()
-    var closing by remember { mutableStateOf(false) }
-    // 平滑关闭：先收键盘，面板骑在键盘上同步降到底部，键盘收完再移除窗口（避免跳动）
+    // 侧滑返回/点遮罩：立即退出编辑并收起键盘
+    // （跟随键盘慢慢关闭会在"升起-收起"反转时产生闪跳，直接立即关闭最干净）
     val close = {
-        if (!closing) {
-            closing = true
-            keyboard?.hide()
-            scope.launch {
-                val start = System.currentTimeMillis()
-                do {
-                    delay(16)
-                    // 持续压制键盘：对抗尚未完成的 show 请求（弹出途中返回时，避免键盘先升完再降的闪跳）
-                    if (imeInsets.getBottom(density) > 0) keyboard?.hide()
-                } while (System.currentTimeMillis() - start < 260 ||
-                    (imeInsets.getBottom(density) > 0 && System.currentTimeMillis() - start < 1200)
-                )
-                onDismiss()
-            }
-        }
+        keyboard?.hide()
+        onDismiss()
     }
     // 面板从组合移除时（Done/保存等直接关闭路径）兜底收起键盘
     DisposableEffect(Unit) {
@@ -864,11 +857,9 @@ private fun KeyboardSheet(
                     indication = null
                 ) { /* 吃掉面板内点击，不关闭 */ }
         ) {
-            // 出现即聚焦并拉起键盘（与面板同时出现，逐帧重试保证成功）；
-            // close 之后立即停止重试，否则键盘会被重新拉起造成闪跳
+            // 出现即聚焦并拉起键盘（与面板同时出现，逐帧重试保证成功）
             LaunchedEffect(Unit) {
                 repeat(40) {
-                    if (closing) return@LaunchedEffect
                     focus.requestFocus()
                     keyboard?.show()
                     delay(16)
@@ -1416,7 +1407,6 @@ private fun AddListSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height((LocalConfiguration.current.screenHeightDp * 0.72f).dp)
                 .padding(horizontal = 20.dp)
         ) {
             // 列表名称输入
@@ -1466,7 +1456,7 @@ private fun AddListSheet(
                 )
                 Spacer(Modifier.weight(1f))
             }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(16.dp))
             // 右下角黄色对勾：保存
             Row(
                 modifier = Modifier.fillMaxWidth(),
