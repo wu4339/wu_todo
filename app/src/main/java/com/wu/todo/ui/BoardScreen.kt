@@ -824,11 +824,13 @@ private fun SectionDetailScreen(
             task = t,
             sections = sections,
             currentSection = section,
+            dotColor = dotColor,
             onDismiss = { editingTask = null },
             onRenameTask = onRenameTask,
             onMoveTask = onMoveTask,
             onAddSubtask = onAddSubtask,
-            onDelete = onDelete
+            onDelete = onDelete,
+            onSetDotColor = onSetDotColor
         )
     }
 }
@@ -936,11 +938,13 @@ private fun TaskEditSheet(
     task: KanbanTask,
     sections: List<KanbanSection>,
     currentSection: KanbanSection,
+    dotColor: Color,
     onDismiss: () -> Unit,
     onRenameTask: (KanbanTask, String) -> Unit,
     onMoveTask: (KanbanTask, KanbanSection) -> Unit,
     onAddSubtask: (KanbanTask, String) -> Unit,
-    onDelete: (KanbanTask) -> Unit
+    onDelete: (KanbanTask) -> Unit,
+    onSetDotColor: (Int) -> Unit
 ) {
     var text by remember(task.id) { mutableStateOf(task.text) }
     var moveMenu by remember { mutableStateOf(false) }
@@ -956,8 +960,23 @@ private fun TaskEditSheet(
                 // 高度随内容自适应：固定 72% 屏高会被键盘顶出屏幕，导致顶部删除按钮不可见
                 .padding(horizontal = 20.dp)
         ) {
-            // 顶部：右上角删除按钮
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            // 顶部：左侧圆点（点击循环换列颜色）+ 右上角删除按钮
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                        .clickable {
+                            // ListPalette 为 Long 字面量列表，与 ARGB Int 转换比较
+                            val idx = ListPalette.indexOf(dotColor.toArgb().toLong())
+                            onSetDotColor(ListPalette[(idx + 1) % ListPalette.size].toInt())
+                        }
+                )
+                Spacer(Modifier.weight(1f))
                 IconButton(onClick = { onDelete(task); onDismiss() }) {
                     Icon(
                         Icons.Filled.Delete,
@@ -1207,7 +1226,7 @@ private fun BigCheckCircle(
             .clip(CircleShape)
             .then(
                 if (done) Modifier.background(WuAccent)
-                else Modifier.border(1.5.dp, strokeColor, CircleShape)
+                else Modifier.border(1.dp, strokeColor, CircleShape)
             ),
         contentAlignment = Alignment.Center
     ) {
