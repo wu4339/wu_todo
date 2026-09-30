@@ -950,6 +950,7 @@ private fun TaskEditSheet(
     var moveMenu by remember { mutableStateOf(false) }
     var showSubInput by remember { mutableStateOf(false) }
     var subText by remember { mutableStateOf("") }
+    var paletteOpen by remember { mutableStateOf(false) }
     val textFocus = remember { FocusRequester() }
 
     // 键盘一体化面板：出现即拉起键盘，面板随键盘同步升起
@@ -960,23 +961,8 @@ private fun TaskEditSheet(
                 // 高度随内容自适应：固定 72% 屏高会被键盘顶出屏幕，导致顶部删除按钮不可见
                 .padding(horizontal = 20.dp)
         ) {
-            // 顶部：左侧圆点（点击循环换列颜色）+ 右上角删除按钮
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(dotColor)
-                        .clickable {
-                            // ListPalette 为 Long 字面量列表，与 ARGB Int 转换比较
-                            val idx = ListPalette.indexOf(dotColor.toArgb().toLong())
-                            onSetDotColor(ListPalette[(idx + 1) % ListPalette.size].toInt())
-                        }
-                )
-                Spacer(Modifier.weight(1f))
+            // 顶部：右上角删除按钮
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 IconButton(onClick = { onDelete(task); onDismiss() }) {
                     Icon(
                         Icons.Filled.Delete,
@@ -1008,6 +994,65 @@ private fun TaskEditSheet(
                     .fillMaxWidth()
                     .focusRequester(textFocus)
             )
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            // 调色板行：点击调色板图标展开/收起颜色网格，点选即换列颜色
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 12.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Palette,
+                    contentDescription = "调色板",
+                    tint = WuSubtle,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .clickable { paletteOpen = !paletteOpen }
+                )
+                Spacer(Modifier.width(18.dp))
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                        .clickable { paletteOpen = !paletteOpen }
+                )
+            }
+            if (paletteOpen) {
+                // 颜色网格：每行 8 个，当前颜色带白色对勾，点选后收起
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.padding(bottom = 14.dp)
+                ) {
+                    ListPalette.chunked(8).forEach { rowColors ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            rowColors.forEach { c ->
+                                val selected = c == dotColor.toArgb().toLong()
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(c.toInt()))
+                                        .clickable {
+                                            onSetDotColor(c.toInt())
+                                            paletteOpen = false
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (selected) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
             // 移动到其他列
             Row(
@@ -1483,10 +1528,12 @@ private fun BoardDrawerContent(
     }
 }
 
-/** 可选的列圆点颜色（调色板循环切换） */
+/** 可选的列圆点颜色（编辑页调色板点选；其余位置点击循环切换） */
 private val ListPalette = listOf(
-    0xFFF2645A, 0xFFF59E42, 0xFFF6C344, 0xFF4CAF50,
-    0xFF42A5F5, 0xFF9C6ADE, 0xFF8A8A8A
+    0xFFF2645A, 0xFFE91E63, 0xFFAB47BC, 0xFF7E57C2,
+    0xFF5C6BC0, 0xFF1E88E5, 0xFF29B6F6, 0xFF26C6DA,
+    0xFF00897B, 0xFF43A047, 0xFF7CB342, 0xFFC0CA33,
+    0xFFFDD835, 0xFFFB8C00, 0xFFF4511E, 0xFFBDBDBD
 )
 
 /** 底部弹出：新建任务列表（输入名称 + 调色板选圆点颜色） */
