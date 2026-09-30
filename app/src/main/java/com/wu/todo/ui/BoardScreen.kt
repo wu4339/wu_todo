@@ -105,6 +105,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -901,7 +902,7 @@ private fun EditSectionSheet(
                     modifier = Modifier.padding(start = 40.dp, top = 14.dp, bottom = 6.dp)
                 ) {
                     ListPalette.chunked(8).forEach { rowColors ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(13.dp)) {
                             rowColors.forEach { c ->
                                 val selected = c == dotColor.toArgb().toLong()
                                 Box(
@@ -1145,7 +1146,7 @@ private fun TaskEditSheet(
                     modifier = Modifier.padding(bottom = 14.dp)
                 ) {
                     ListPalette.chunked(8).forEach { rowColors ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(13.dp)) {
                             rowColors.forEach { c ->
                                 val selected = c == dotColor.toArgb().toLong()
                                 Box(
@@ -1543,6 +1544,13 @@ private fun SectionCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            // 柔和立体感：淡灰色阴影，只加投影、卡片颜色保持纯白不变
+            .shadow(
+                elevation = 6.dp,
+                shape = RoundedCornerShape(18.dp),
+                ambientColor = Color(0x14000000),
+                spotColor = Color(0x33000000)
+            )
             .clickable { onOpen() },
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = WuCard)
@@ -1774,9 +1782,9 @@ private fun AddListSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // 大面板（参考截图）：占屏高约 68%，内容在顶部、保存按钮沉底，
+                // 大面板（参考截图）：占屏高约 68% 再减 30dp，内容在顶部、保存按钮沉底，
                 // 调色板网格在窗口内部展开，窗口大小保持不变
-                .height(LocalConfiguration.current.screenHeightDp.dp * 0.68f)
+                .height(LocalConfiguration.current.screenHeightDp.dp * 0.68f - 30.dp)
                 .padding(horizontal = 20.dp)
         ) {
             // 列表名称输入
@@ -1833,7 +1841,7 @@ private fun AddListSheet(
                     modifier = Modifier.padding(start = 40.dp, top = 14.dp, bottom = 6.dp)
                 ) {
                     ListPalette.chunked(8).forEachIndexed { rowIdx, rowColors ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(13.dp)) {
                             rowColors.forEachIndexed { colIdx, c ->
                                 val absIdx = rowIdx * 8 + colIdx
                                 Box(
