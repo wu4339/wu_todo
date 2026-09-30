@@ -202,6 +202,20 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /** 设置任务备注（任务行下方的缩进普通文本行）并写回 .md，text 为空则清除备注 */
+    fun setNote(task: KanbanTask, text: String) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        if (text.trim() == task.note) return
+
+        val newLines = KanbanParser.setNote(cur.lines, task, text)
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
     /** 新建看板列：写回 .md，并把圆点颜色记在本地 */
     fun addSection(title: String, colorArgb: Int) {
         val cur = state.value

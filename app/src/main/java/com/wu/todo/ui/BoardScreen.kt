@@ -57,9 +57,11 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Notes
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.SubdirectoryArrowRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -184,6 +186,7 @@ fun BoardScreen(
             onRenameTask = viewModel::renameTask,
             onMoveTask = { task, target -> viewModel.moveTask(task, target, openedSection) },
             onAddSubtask = viewModel::addSubtask,
+            onSetNote = viewModel::setNote,
             onDeleteList = { viewModel.deleteSection(openedSection) },
             onSetAllDone = { done -> viewModel.setAllTasks(openedSection, done) },
             onDeleteCompleted = { viewModel.deleteCompletedTasks(openedSection) },
@@ -406,6 +409,7 @@ private fun SectionDetailScreen(
     onRenameTask: (KanbanTask, String) -> Unit,
     onMoveTask: (KanbanTask, KanbanSection) -> Unit,
     onAddSubtask: (KanbanTask, String) -> Unit,
+    onSetNote: (KanbanTask, String) -> Unit,
     onDeleteList: () -> Unit,
     onSetAllDone: (Boolean) -> Unit,
     onDeleteCompleted: () -> Unit,
@@ -779,6 +783,7 @@ private fun SectionDetailScreen(
             onRenameTask = onRenameTask,
             onMoveTask = onMoveTask,
             onAddSubtask = onAddSubtask,
+            onSetNote = onSetNote,
             onDelete = onDelete,
             onSetDotColor = onSetDotColor
         )
@@ -1047,12 +1052,15 @@ private fun TaskEditSheet(
     onMoveTask: (KanbanTask, KanbanSection) -> Unit,
     onAddSubtask: (KanbanTask, String) -> Unit,
     onDelete: (KanbanTask) -> Unit,
+    onSetNote: (KanbanTask, String) -> Unit,
     onSetDotColor: (Int) -> Unit
 ) {
     var text by remember(task.id) { mutableStateOf(task.text) }
     var moveMenu by remember { mutableStateOf(false) }
-    var showSubInput by remember { mutableStateOf(false) }
+    // Add items 交互状态：0=收起 1=选项菜单(Note/Subtask) 2=备注输入 3=子任务输入
+    var addItemState by remember(task.id) { mutableStateOf(0) }
     var subText by remember { mutableStateOf("") }
+    var noteText by remember(task.id) { mutableStateOf(task.note) }
     var paletteOpen by remember { mutableStateOf(false) }
     val textFocus = remember { FocusRequester() }
 
@@ -1209,52 +1217,134 @@ private fun TaskEditSheet(
                 }
             }
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            // Add items：添加子任务
-            if (!showSubInput) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { showSubInput = true }
-                        .padding(vertical = 10.dp)
-                ) {
-                    Icon(
-                        Icons.Outlined.AddCircle,
-                        contentDescription = null,
-                        tint = WuSubtle,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    Text("Add items", fontSize = 15.sp, color = WuSubtle)
+            // Add items：先弹出选项菜单（Note / Subtask），再进入对应输入行
+            when (addItemState) {
+                0 -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { addItemState = 1 }
+                            .padding(vertical = 10.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.AddCircle,
+                            contentDescription = null,
+                            tint = WuSubtle,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Text("Add items", fontSize = 15.sp, color = WuSubtle)
+                    }
                 }
-            } else {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp)
-                ) {
-                    TextField(
-                        value = subText,
-                        onValueChange = { subText = it },
-                        placeholder = { Text("子任务内容", color = WuSubtle, fontSize = 14.sp) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = WuBackground,
-                            unfocusedContainerColor = WuBackground,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            cursorColor = WuAccent
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = {
-                        onAddSubtask(task, subText)
-                        subText = ""
-                        showSubInput = false
-                    }) {
-                        Icon(Icons.Filled.Add, contentDescription = "添加子任务", tint = WuTitle)
+                1 -> {
+                    // 选项菜单：Note（备注）与 Subtask（子任务）
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(WuBackground)
+                                .clickable {
+                                    noteText = task.note
+                                    addItemState = 2
+                                }
+                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.Notes,
+                                contentDescription = null,
+                                tint = WuSubtle,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Text("Note", fontSize = 15.sp, color = WuTitle)
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(WuBackground)
+                                .clickable { addItemState = 3 }
+                                .padding(horizontal = 14.dp, vertical = 12.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.SubdirectoryArrowRight,
+                                contentDescription = null,
+                                tint = WuSubtle,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Text("Subtask", fontSize = 15.sp, color = WuTitle)
+                        }
+                    }
+                }
+                2 -> {
+                    // 备注（note）输入行：预填现有备注，对勾提交保存
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                    ) {
+                        TextField(
+                            value = noteText,
+                            onValueChange = { noteText = it },
+                            placeholder = { Text("Note", color = WuSubtle, fontSize = 14.sp) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = WuBackground,
+                                unfocusedContainerColor = WuBackground,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                cursorColor = WuAccent
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            onSetNote(task, noteText)
+                            addItemState = 0
+                        }) {
+                            Icon(Icons.Filled.Check, contentDescription = "保存备注", tint = WuTitle)
+                        }
+                    }
+                }
+                else -> {
+                    // 子任务（subtask）输入行
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                    ) {
+                        TextField(
+                            value = subText,
+                            onValueChange = { subText = it },
+                            placeholder = { Text("子任务内容", color = WuSubtle, fontSize = 14.sp) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = WuBackground,
+                                unfocusedContainerColor = WuBackground,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                cursorColor = WuAccent
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            onAddSubtask(task, subText)
+                            subText = ""
+                            addItemState = 0
+                        }) {
+                            Icon(Icons.Filled.Add, contentDescription = "添加子任务", tint = WuTitle)
+                        }
                     }
                 }
             }
@@ -1280,41 +1370,51 @@ private fun TaskEditSheet(
     }
 }
 
-/** 详情页任务行：点击行=打开底部编辑页；点击圆圈=勾选完成 */
+/** 详情页任务行：点击行=打开底部编辑页；点击圆圈=勾选完成；任务下方显示备注 */
 @Composable
 private fun DetailTaskRow(
     task: KanbanTask,
     onToggle: (KanbanTask) -> Unit,
     onEdit: (KanbanTask) -> Unit
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onEdit(task) }
             .padding(start = (task.indent * 10).dp, top = 8.dp, bottom = 8.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .clip(CircleShape)
-                .clickable { onToggle(task) }
-                .padding(2.dp)
-        ) {
-            BigCheckCircle(done = false, size = 18.dp, strokeColor = WuTitle)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { onToggle(task) }
+                    .padding(2.dp)
+            ) {
+                BigCheckCircle(done = false, size = 18.dp, strokeColor = WuTitle)
+            }
+            Spacer(Modifier.width(14.dp))
+            Text(
+                text = task.text,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = WuTitle,
+                lineHeight = 19.sp
+            )
         }
-        Spacer(Modifier.width(14.dp))
-        Text(
-            text = task.text,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = WuTitle,
-            lineHeight = 19.sp
-        )
+        if (task.note.isNotBlank()) {
+            Text(
+                text = task.note,
+                fontSize = 12.sp,
+                color = WuSubtle,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(start = 36.dp, top = 2.dp)
+            )
+        }
     }
 }
 
-/** 已完成任务：灰色对勾（点=取消完成）+ 灰字（点=编辑）+ 右侧 ✕ 删除 */
+/** 已完成任务：灰色对勾（点=取消完成）+ 灰字（点=编辑）+ 右侧 ✕ 删除；任务下方显示备注 */
 @Composable
 private fun CompletedTaskRow(
     task: KanbanTask,
@@ -1322,43 +1422,53 @@ private fun CompletedTaskRow(
     onDelete: (KanbanTask) -> Unit,
     onEdit: (KanbanTask) -> Unit
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .padding(start = (task.indent * 10).dp, top = 6.dp, bottom = 6.dp)
     ) {
-        Icon(
-            imageVector = Icons.Filled.Check,
-            contentDescription = "取消完成",
-            tint = WuDoneGrey,
-            modifier = Modifier
-                .size(24.dp)
-                .clip(CircleShape)
-                .clickable { onToggle(task) }
-        )
-        Spacer(Modifier.width(16.dp))
-        Text(
-            text = task.text,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = WuDoneGrey,
-            lineHeight = 19.sp,
-            modifier = Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(8.dp))
-                .clickable { onEdit(task) }
-        )
-        Icon(
-            imageVector = Icons.Filled.Close,
-            contentDescription = "删除任务",
-            tint = WuDoneGrey,
-            modifier = Modifier
-                .size(20.dp)
-                .clip(CircleShape)
-                .clickable { onDelete(task) }
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = "取消完成",
+                tint = WuDoneGrey,
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .clickable { onToggle(task) }
+            )
+            Spacer(Modifier.width(16.dp))
+            Text(
+                text = task.text,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = WuDoneGrey,
+                lineHeight = 19.sp,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onEdit(task) }
+            )
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "删除任务",
+                tint = WuDoneGrey,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .clickable { onDelete(task) }
+            )
+        }
+        if (task.note.isNotBlank()) {
+            Text(
+                text = task.note,
+                fontSize = 12.sp,
+                color = WuDoneGrey.copy(alpha = 0.75f),
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(start = 40.dp, top = 2.dp)
+            )
+        }
     }
 }
 
@@ -1656,8 +1766,8 @@ private fun AddListSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                // 面板整体上移 40dp，避免贴着键盘太近
-                .padding(bottom = 40.dp)
+                // 面板整体上移（累计 80dp），避免贴着键盘太近
+                .padding(bottom = 80.dp)
         ) {
             // 列表名称输入
             TextField(

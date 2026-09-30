@@ -27,7 +27,9 @@ data class KanbanTask(
     val text: String,
     val done: Boolean,
     /** 缩进层级（一个 tab 记为 4 级），用于子任务缩进显示 */
-    val indent: Int
+    val indent: Int,
+    /** 任务备注：任务行下方的缩进普通文本行（Obsidian Kanban 卡片 note），多行以空格拼接 */
+    val note: String = ""
 )
 
 data class KanbanSection(
@@ -63,6 +65,8 @@ object KanbanParser {
         var fence = false
         var comment = false
         var seq = 0
+        // 当前备注归属的任务 id（任务行下方连续的缩进普通文本行视为该任务的备注）
+        var noteTargetId: String? = null
 
         lines.forEachIndexed { index, line ->
             val t = line.trim()
@@ -107,6 +111,7 @@ object KanbanParser {
                 val newSection = MutableSection(title, index)
                 current = newSection
                 sections += newSection
+                noteTargetId = null
                 return@forEachIndexed
             }
 
@@ -125,13 +130,29 @@ object KanbanParser {
                     current = section
                     sections += section
                 }
-                section.tasks += KanbanTask(
+                val newTask = KanbanTask(
                     id = "t${++seq}",
                     lineIndex = index,
                     text = text,
                     done = done,
                     indent = indent
                 )
+                section.tasks += newTask
+                noteTargetId = newTask.id
+                return@forEachIndexed
+            }
+
+            // 任务行下方的缩进普通文本行 → 该任务的备注（遇到空行/顶格行结束）
+            if (current != null && noteTargetId != null) {
+                val lastTask = current!!.tasks.lastOrNull { it.id == noteTargetId }
+                if (lastTask != null && line.isNotBlank() &&
+                    (line.startsWith(" ") || line.startsWith("\t"))
+                ) {
+                    val i = current!!.tasks.indexOf(lastTask)
+                    current!!.tasks[i] = lastTask.copy(note = (lastTask.note + " " + t).trim())
+                    return@forEachIndexed
+                }
+                noteTargetId = null
             }
         }
 
@@ -241,6 +262,27 @@ object KanbanParser {
         return result
     }
 
+    /** 任务行下方的连续备注行（缩进非任务非空行）的结束判断 */
+    private fun isNoteLine(l: String): Boolean =
+        l.isNotBlank() && (l.startsWith(" ") || l.startsWith("\t")) && TASK_RE.find(l) == null
+
+    /** 设置任务备注：先清除任务行下方已有备注行；text 非空时插入新备注行（缩进与任务行一致） */
+    fun setNote(lines: List<String>, task: KanbanTask, text: String): List<String> {
+        val idx = task.lineIndex
+        if (idx !in lines.indices) return lines
+        if (TASK_RE.find(lines[idx]) == null) return lines
+        val result = ArrayList(lines)
+        var i = idx + 1
+        while (i < result.size && isNoteLine(result[i])) {
+            result.removeAt(i)
+        }
+        if (text.isNotBlank()) {
+            val indent = lines[idx].takeWhile { it == ' ' || it == '\t' }
+            result.add(idx + 1, "$indent${text.trim()}")
+        }
+        return result
+    }
+
     /** 在文件末尾追加一个新看板列（Obsidian 设置注释块之前），返回新的行集合 */
     fun addSection(lines: List<String>, title: String): List<String> {
         if (title.isBlank()) return lines
@@ -319,6 +361,10 @@ object KanbanParser {
         if (TASK_RE.find(lines[idx]) == null) return lines
         val result = ArrayList(lines)
         result.removeAt(idx)
+        // 连带删除任务下方的备注行，避免残留
+        while (idx < result.size && isNoteLine(result[idx])) {
+            result.removeAt(idx)
+        }
         return result
     }
 
