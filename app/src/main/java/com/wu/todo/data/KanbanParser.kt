@@ -28,7 +28,7 @@ data class KanbanTask(
     val done: Boolean,
     /** 缩进层级（一个 tab 记为 4 级），用于子任务缩进显示 */
     val indent: Int,
-    /** 任务备注：任务行下方的缩进普通文本行（Obsidian Kanban 卡片 note），多行以空格拼接 */
+    /** 任务备注：任务行下方的缩进普通文本行（Obsidian Kanban 卡片 note），多行以换行拼接 */
     val note: String = ""
 )
 
@@ -149,7 +149,9 @@ object KanbanParser {
                     (line.startsWith(" ") || line.startsWith("\t"))
                 ) {
                     val i = current!!.tasks.indexOf(lastTask)
-                    current!!.tasks[i] = lastTask.copy(note = (lastTask.note + " " + t).trim())
+                    // 多行备注保留换行（原先用空格拼接，多行 note 往返会丢掉换行）
+                    val merged = if (lastTask.note.isEmpty()) t else lastTask.note + "\n" + t
+                    current!!.tasks[i] = lastTask.copy(note = merged)
                     return@forEachIndexed
                 }
                 noteTargetId = null
@@ -329,7 +331,13 @@ object KanbanParser {
         }
         if (text.isNotBlank()) {
             val indent = lines[idx].takeWhile { it == ' ' || it == '\t' }
-            result.add(idx + 1, "$indent${text.trim()}")
+            // 多行备注：逐行写入，每行保持与任务行相同的缩进
+            // （Obsidian Kanban 把任务行下方的缩进行识别为卡片 note）
+            val noteLines = text.trim().lines()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .map { "$indent$it" }
+            result.addAll(idx + 1, noteLines)
         }
         return result
     }

@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Notes
@@ -1274,6 +1275,28 @@ private fun TaskEditSheet(
     val subFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
+    // "Add items" 入口行（未展开时、以及备注行下方共用）
+    val addItemsEntry: @Composable () -> Unit = {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { addItemState = 1 }
+                .padding(horizontal = 20.dp)
+                .padding(vertical = 14.dp)
+        ) {
+            Icon(
+                Icons.Outlined.AddCircle,
+                contentDescription = null,
+                tint = WuSubtle,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            Text("Add items", fontSize = 15.sp, color = WuTitle)
+        }
+    }
+
     // 打开选择面板时收起键盘（面板落到底部）；从面板返回时恢复输入焦点与键盘
     LaunchedEffect(moveSheetOpen) {
         if (moveSheetOpen) {
@@ -1413,24 +1436,7 @@ private fun TaskEditSheet(
             // Add items：先弹出选项菜单（Note / Subtask），再进入对应输入行
             when (addItemState) {
                 0 -> {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { addItemState = 1 }
-                            .padding(horizontal = 20.dp)
-                            .padding(vertical = 14.dp)
-                    ) {
-                        Icon(
-                            Icons.Outlined.AddCircle,
-                            contentDescription = null,
-                            tint = WuSubtle,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(Modifier.width(14.dp))
-                        Text("Add items", fontSize = 15.sp, color = WuTitle)
-                    }
+                    addItemsEntry()
                 }
                 1 -> {
                     // 选项菜单：Note（备注）与 Subtask（子任务）
@@ -1480,35 +1486,60 @@ private fun TaskEditSheet(
                     }
                 }
                 2 -> {
-                    // 备注（note）输入行：预填现有备注，对勾提交保存
+                    // 备注（note）行：左侧笔记图标 + 多行输入框 + 右侧 ✕（保存并收起），
+                    // 行下方保留 Add items 入口（与参考图一致）
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 20.dp, vertical = 8.dp)
                     ) {
+                        Icon(
+                            Icons.Outlined.Notes,
+                            contentDescription = null,
+                            tint = WuSubtle,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(14.dp))
                         TextField(
                             value = noteText,
                             onValueChange = { noteText = it },
-                            placeholder = { Text("Note", color = WuSubtle, fontSize = 14.sp) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(10.dp),
+                            placeholder = { Text("Note", color = WuSubtle, fontSize = 15.sp) },
+                            // 多行：自动换行，最多 5 行，超出后框内滚动
+                            singleLine = false,
+                            minLines = 1,
+                            maxLines = 5,
+                            textStyle = TextStyle(
+                                fontSize = 15.sp,
+                                color = WuTitle,
+                                lineHeight = 22.sp
+                            ),
                             colors = TextFieldDefaults.colors(
-                                focusedContainerColor = WuBackground,
-                                unfocusedContainerColor = WuBackground,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent,
                                 unfocusedIndicatorColor = Color.Transparent,
                                 cursorColor = WuAccent
                             ),
-                            modifier = Modifier.weight(1f).focusRequester(noteFocus)
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(noteFocus)
                         )
+                        Spacer(Modifier.width(8.dp))
                         IconButton(onClick = {
                             onSetNote(task, noteText)
                             addItemState = 0
                         }) {
-                            Icon(Icons.Filled.Check, contentDescription = "保存备注", tint = WuTitle)
+                            Icon(
+                                Icons.Outlined.Close,
+                                contentDescription = "保存备注并收起",
+                                tint = WuSubtle,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
+                    HorizontalDivider(color = WuDivider, thickness = 1.dp)
+                    addItemsEntry()
                 }
                 else -> {
                     // 子任务（subtask）输入行
