@@ -3,6 +3,7 @@ package com.wu.todo.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -104,6 +105,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -112,6 +114,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.wu.todo.R
 import com.wu.todo.data.KanbanSection
 import com.wu.todo.data.KanbanTask
 import com.wu.todo.ui.theme.WuAccent
@@ -266,6 +269,8 @@ fun BoardScreen(
                     }
                 }
             )
+            // 顶栏与看板内容（Pinned 区）之间的分割线
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
@@ -628,10 +633,10 @@ private fun SectionDetailScreen(
                     Spacer(Modifier.width(16.dp))
                     Text(
                         text = section.title,
-                        fontSize = 24.sp,
+                        fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         color = WuTitle,
-                        lineHeight = 30.sp,
+                        lineHeight = 26.sp,
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
@@ -646,7 +651,28 @@ private fun SectionDetailScreen(
 
             // 未完成任务
             if (activeTasks.isEmpty() && doneTasks.isEmpty()) {
-                Text("（无任务）", color = WuSubtle, fontSize = 14.sp)
+                // 空列表：卡通插画 + 提示文字
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 48.dp, bottom = 24.dp)
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.empty_illustration),
+                        contentDescription = null,
+                        modifier = Modifier.size(230.dp)
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Text(
+                        "There is no task.",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = WuTitle
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("Press + to add the task", fontSize = 15.sp, color = WuSubtle)
+                }
             } else {
                 activeTasks.forEach { task ->
                     DetailTaskRow(
@@ -1054,9 +1080,9 @@ private fun DetailTaskRow(
         Spacer(Modifier.width(14.dp))
         Text(
             text = task.text,
-            fontSize = 16.sp,
+            fontSize = 14.sp,
             color = WuTitle,
-            lineHeight = 22.sp
+            lineHeight = 19.sp
         )
     }
 }
@@ -1088,9 +1114,9 @@ private fun CompletedTaskRow(
         Spacer(Modifier.width(16.dp))
         Text(
             text = task.text,
-            fontSize = 16.sp,
+            fontSize = 14.sp,
             color = WuDoneGrey,
-            lineHeight = 22.sp,
+            lineHeight = 19.sp,
             modifier = Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(8.dp))
