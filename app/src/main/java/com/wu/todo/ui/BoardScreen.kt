@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -1292,8 +1293,8 @@ private fun TaskEditSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // 面板增高：顶部离屏幕顶约 40dp（高度随键盘动态），保存按钮沉底
-                .height(screenH - imeDp - 40.dp)
+                // 面板增高：顶部离屏幕顶约 60dp（高度随键盘动态），保存按钮沉底
+                .height(screenH - imeDp - 60.dp)
                 .padding(horizontal = 20.dp)
         ) {
             // 顶部：右上角删除按钮
@@ -1770,16 +1771,17 @@ private fun SectionCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            // 柔和立体感：淡灰色阴影，只加投影、卡片颜色保持纯白不变
+            // 立体感：小圆角 + 淡边框 + 底部更深的投影（"底部线更黑"=更明显的暗投影）
             .shadow(
-                elevation = 6.dp,
-                shape = RoundedCornerShape(18.dp),
-                ambientColor = Color(0x14000000),
-                spotColor = Color(0x33000000)
+                elevation = 8.dp,
+                shape = RoundedCornerShape(14.dp),
+                ambientColor = Color(0x1A000000),
+                spotColor = Color(0x4D000000)
             )
             .clickable { onOpen() },
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = WuCard)
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = WuCard),
+        border = BorderStroke(1.dp, Color(0xFFE6E6E6))
     ) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
