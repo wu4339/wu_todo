@@ -62,6 +62,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Notes
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PushPin
@@ -1132,6 +1134,8 @@ private fun KeyboardSheet(
     /** 紧凑模式：面板高度随内容自适应，整体贴在键盘上方（如"新建任务"输入条）；
      *  默认 false = 大面板，顶部固定离屏顶 60dp */
     compact: Boolean = false,
+    /** 内容区水平内边距：默认 20dp。需要"分割线通栏"的面板（如任务编辑页）传 0.dp，自行控制各行的内边距 */
+    contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp),
     content: @Composable ColumnScope.() -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1230,7 +1234,7 @@ private fun KeyboardSheet(
                 modifier = Modifier
                     .then(if (compact) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
                     .imePadding()
-                    .padding(horizontal = 20.dp)
+                    .padding(contentPadding)
             ) {
                 content()
             }
@@ -1288,10 +1292,12 @@ private fun TaskEditSheet(
     }
 
     // 键盘一体化面板：出现即拉起键盘，面板随键盘同步升起
+    // contentPadding = 0：分割线需要通栏（左边缘到右边缘），水平内边距由各行自己控制
     KeyboardSheet(
         onDismiss = onDismiss,
         focus = textFocus,
         imeAutoClose = !moveSheetOpen,
+        contentPadding = PaddingValues(0.dp),
         overlay = {
             if (moveSheetOpen) {
                 MoveToListPanel(
@@ -1312,52 +1318,75 @@ private fun TaskEditSheet(
             modifier = Modifier
                 .fillMaxSize()
         ) {
-            // 标题 + 删除键 同一行：标题占满左侧（紧贴面板顶部，离屏顶 60dp），删除键沉到右端
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+            // 顶部行：居中拖拽手柄 + 右上角圆形删除按钮（面板顶部第一行，离屏顶 60dp）
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(top = 10.dp)
             ) {
-                TextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    placeholder = { Text("任务内容", color = WuSubtle, fontSize = 20.sp) },
-                    // 多行输入：长任务自动换行、输入框随内容增高（最多 3 行，超出后框内滚动）
-                    singleLine = false,
-                    minLines = 1,
-                    maxLines = 3,
-                    textStyle = TextStyle(
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = WuTitle
-                    ),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        cursorColor = WuAccent
-                    ),
+                Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(textFocus)
+                        .align(Alignment.Center)
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(WuDivider)
                 )
-                IconButton(onClick = { onDelete(task); onDismiss() }) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(WuBackground)
+                        .clickable { onDelete(task); onDismiss() },
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
-                        Icons.Filled.Delete,
+                        Icons.Outlined.Delete,
                         contentDescription = "删除任务",
-                        tint = WuSubtle,
-                        modifier = Modifier.size(22.dp)
+                        tint = WuTitle,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
+            // 任务标题：独占一行、自动换行（最多 3 行，超出后框内滚动）
+            TextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = { Text("任务内容", color = WuSubtle, fontSize = 20.sp) },
+                // 多行输入：长任务自动换行、输入框随内容增高（最多 3 行，超出后框内滚动）
+                singleLine = false,
+                minLines = 1,
+                maxLines = 3,
+                textStyle = TextStyle(
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WuTitle
+                ),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = WuAccent
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(top = 16.dp, bottom = 10.dp)
+                    .focusRequester(textFocus)
+            )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
             // 移动到其他列
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 6.dp)
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .padding(vertical = 10.dp)
             ) {
                 Icon(
-                    Icons.Filled.List,
+                    Icons.Outlined.DriveFileMove,
                     contentDescription = null,
                     tint = WuSubtle,
                     modifier = Modifier.size(20.dp)
@@ -1387,25 +1416,27 @@ private fun TaskEditSheet(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
+                            .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { addItemState = 1 }
-                            .padding(vertical = 10.dp)
+                            .padding(horizontal = 20.dp)
+                            .padding(vertical = 14.dp)
                     ) {
                         Icon(
                             Icons.Outlined.AddCircle,
                             contentDescription = null,
                             tint = WuSubtle,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                         Spacer(Modifier.width(14.dp))
-                        Text("Add items", fontSize = 15.sp, color = WuSubtle)
+                        Text("Add items", fontSize = 15.sp, color = WuTitle)
                     }
                 }
                 1 -> {
                     // 选项菜单：Note（备注）与 Subtask（子任务）
                     Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(vertical = 8.dp)
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1454,7 +1485,7 @@ private fun TaskEditSheet(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 6.dp)
+                            .padding(horizontal = 20.dp, vertical = 8.dp)
                     ) {
                         TextField(
                             value = noteText,
@@ -1485,7 +1516,7 @@ private fun TaskEditSheet(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 6.dp)
+                            .padding(horizontal = 20.dp, vertical = 8.dp)
                     ) {
                         TextField(
                             value = subText,
@@ -1515,7 +1546,9 @@ private fun TaskEditSheet(
             Spacer(Modifier.weight(1f))
             // 右下角黄色对勾：保存文本修改（沉底）
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.End
             ) {
                 FloatingActionButton(
