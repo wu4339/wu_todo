@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
@@ -462,7 +463,7 @@ private fun SectionDetailScreen(
     var dragOrder by remember(sortKey) { mutableStateOf<List<String>?>(null) }
     var dragTaskId by remember(sortKey) { mutableStateOf<String?>(null) }
     var dragOffset by remember(sortKey) { mutableFloatStateOf(0f) }
-    val rowTops = remember(sortKey) { mutableStateMapOf<String, Float>() }
+    // 各行高度（拖动时用于推算槽位位置）
     val rowHeights = remember(sortKey) { mutableStateMapOf<String, Float>() }
     // pointerInput 的 lambda 只在首次创建时捕获变量，用 State 才能读到最新值
     val dragOrderState = rememberUpdatedState(dragOrder)
@@ -708,59 +709,84 @@ private fun SectionDetailScreen(
                                 shape = RoundedCornerShape(10.dp)
                             )
                             .onGloballyPositioned { coords ->
-                                rowTops[task.id] = coords.positionInWindow().y
+                                // 只记高度：拖动时用"顺序 + 高度累加"推算各行位置，
+                                // 不依赖 onGloballyPositioned 回写的实时 y（换位后要下一帧才更新）
                                 rowHeights[task.id] = coords.size.height.toFloat()
                             }
                             .pointerInput(task.id) {
+                                // 拖动期局部几何模型：手势开始时快照顺序与各行高度，
+                                // 之后每次换位都由"高度累加"同步算出槽位 y，
+                                // 彻底避免读到过期坐标导致的反复横跳
+                                var ids: MutableList<String> = mutableListOf()
+                                var hs: Map<String, Float> = emptyMap()
+
+                                // 按当前顺序累加高度得到每个槽位的顶部 y（基准 0，比较时同基准即可）
+                                fun topsOf(): FloatArray {
+                                    val arr = FloatArray(ids.size)
+                                    var acc = 0f
+                                    ids.forEachIndexed { i, id ->
+                                        arr[i] = acc
+                                        acc += hs[id] ?: 0f
+                                    }
+                                    return arr
+                                }
+
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = {
+                                        val snapshot = activeTasksState.value
+                                        ids = snapshot.map { it.id }.toMutableList()
+                                        // 快照各行高度；个别未测到的用中位高度兜底，避免模型塌陷
+                                        val measured = snapshot.mapNotNull { rowHeights[it.id] }
+                                            .filter { it > 0f }
+                                            .sorted()
+                                        val fallback = measured.getOrNull(measured.size / 2) ?: 0f
+                                        hs = snapshot.associate {
+                                            it.id to ((rowHeights[it.id] ?: 0f).takeIf { h -> h > 0f } ?: fallback)
+                                        }
                                         dragTaskId = task.id
                                         dragOffset = 0f
-                                        // 以当前实际顺序作为拖动基准快照
-                                        dragOrder = activeTasksState.value.map { it.id }
+                                        dragOrder = ids.toList()
                                     },
                                     onDrag = { change, amount ->
                                         change.consume()
-                                        if (dragOrderState.value == null) return@detectDragGesturesAfterLongPress
+                                        if (dragOrderState.value == null || ids.isEmpty()) return@detectDragGesturesAfterLongPress
                                         dragOffset += amount.y
-                                        var top = rowTops[task.id] ?: 0f
-                                        val h = rowHeights[task.id] ?: 0f
-                                        // 越过相邻行中位线即交换（相邻交换 + 位移补偿，保证视觉连续）
+                                        val h = hs[task.id] ?: 0f
+                                        // 越过相邻行中位线即交换；每次交换做位移补偿保持视觉连续
                                         var guard = 0
                                         var swapped = true
-                                        while (swapped && guard++ < 12) {
+                                        while (swapped && guard++ < 20) {
                                             swapped = false
-                                            val cur = dragOrderState.value ?: break
-                                            val i = cur.indexOf(task.id)
+                                            val tops = topsOf()
+                                            val i = ids.indexOf(task.id)
                                             if (i < 0) break
-                                            var center = top + h / 2 + dragOffset
-                                            if (i < cur.size - 1) {
-                                                val nid = cur[i + 1]
-                                                val nt = rowTops[nid] ?: 0f
-                                                val nh = rowHeights[nid] ?: 0f
-                                                if (center > nt + nh / 2) {
-                                                    val next = cur.toMutableList()
-                                                    next[i] = nid
-                                                    next[i + 1] = task.id
-                                                    dragOrder = next
-                                                    dragOffset -= (nt - top)
-                                                    top = nt
-                                                    center = top + h / 2 + dragOffset
+                                            val center = tops[i] + h / 2 + dragOffset
+                                            // 向下越过下一行中线 → 与下一行交换
+                                            if (i < ids.size - 1) {
+                                                val nid = ids[i + 1]
+                                                val nh = hs[nid] ?: 0f
+                                                if (center > tops[i + 1] + nh / 2) {
+                                                    ids[i] = nid
+                                                    ids[i + 1] = task.id
+                                                    // 换位后被拖行坐到下一槽位（其顶部 = 原顶部 + 邻行高）
+                                                    dragOffset -= nh
+                                                    dragOrder = ids.toList()
                                                     swapped = true
+                                                    continue
                                                 }
                                             }
-                                            if (!swapped && i > 0) {
-                                                val pid = cur[i - 1]
-                                                val pt = rowTops[pid] ?: 0f
-                                                val ph = rowHeights[pid] ?: 0f
-                                                if (center < pt + ph / 2) {
-                                                    val next = cur.toMutableList()
-                                                    next[i] = pid
-                                                    next[i - 1] = task.id
-                                                    dragOrder = next
-                                                    dragOffset += (top - pt)
-                                                    top = pt
+                                            // 向上越过上一行中线 → 与上一行交换
+                                            if (i > 0) {
+                                                val pid = ids[i - 1]
+                                                val ph = hs[pid] ?: 0f
+                                                if (center < tops[i - 1] + ph / 2) {
+                                                    ids[i] = pid
+                                                    ids[i - 1] = task.id
+                                                    // 换位后被拖行上移到上一槽位
+                                                    dragOffset += ph
+                                                    dragOrder = ids.toList()
                                                     swapped = true
+                                                    continue
                                                 }
                                             }
                                         }
@@ -1511,12 +1537,15 @@ private fun BoxScope.MoveToListPanel(
                 indication = null
             ) { onCancel() }
     )
+    // 紧凑浮层卡片：四周留边、限宽限高；列表项多了在卡片内部上下滚动
+    val maxPanelHeight = LocalConfiguration.current.screenHeightDp.dp * 0.46f
     Column(
         modifier = Modifier
             .align(Alignment.BottomCenter)
+            .padding(horizontal = 26.dp, vertical = 30.dp)
             .fillMaxWidth()
-            .fillMaxHeight(0.85f)
-            .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+            .heightIn(max = maxPanelHeight)
+            .background(WuCard, RoundedCornerShape(18.dp))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -1526,24 +1555,26 @@ private fun BoxScope.MoveToListPanel(
         Box(
             modifier = Modifier
                 .align(Alignment.CenterHorizontally)
-                .padding(top = 10.dp, bottom = 14.dp)
-                .width(36.dp)
+                .padding(top = 10.dp, bottom = 8.dp)
+                .width(30.dp)
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp))
                 .background(WuDivider)
         )
         Text(
             "Select a list to move to",
-            fontSize = 16.sp,
+            fontSize = 14.sp,
             color = WuSubtle,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
         )
         HorizontalDivider(color = WuDivider, thickness = 1.dp)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // fill=false：内容少时卡片自然收缩，内容多时占满限高并在内部滚动
+                .weight(1f, fill = false)
                 .verticalScroll(rememberScrollState())
-                .padding(vertical = 8.dp)
+                .padding(vertical = 6.dp)
         ) {
             sections.forEach { s ->
                 val isCurrent = s.headerLineIndex == currentSection.headerLineIndex
@@ -1553,24 +1584,24 @@ private fun BoxScope.MoveToListPanel(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
                         .clickable(enabled = !isCurrent) { onPick(s) }
-                        .padding(horizontal = 24.dp, vertical = 15.dp)
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(13.dp)
+                            .size(12.dp)
                             .clip(CircleShape)
                             .background(Color(sectionColors[s.title] ?: WuAccent.toArgb()))
                     )
-                    Spacer(Modifier.width(18.dp))
+                    Spacer(Modifier.width(16.dp))
                     Text(
                         s.title,
-                        fontSize = 16.sp,
+                        fontSize = 15.sp,
                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                         color = if (isCurrent) WuSubtle else WuTitle
                     )
                 }
             }
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
