@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -724,6 +725,7 @@ private fun SectionDetailScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .imePadding()
                     .padding(horizontal = 20.dp)
             ) {
                 TextField(
@@ -1337,6 +1339,7 @@ private fun AddListSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.72f)
+                .imePadding()
                 .padding(horizontal = 20.dp)
         ) {
             // 列表名称输入
