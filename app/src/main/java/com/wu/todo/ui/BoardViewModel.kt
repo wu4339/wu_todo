@@ -224,6 +224,16 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /** 设置列的圆点颜色（仅记录在本地偏好，不改动 .md 内容） */
+    fun setSectionColor(section: KanbanSection, colorArgb: Int) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        prefs.edit().putInt(sectionColorPrefsKey(uri, section.title), colorArgb).apply()
+        update {
+            copy(sectionColors = sectionColors + (section.title to colorArgb))
+        }
+    }
+
     private fun sectionColorPrefsKey(uri: Uri, title: String) = "sec_color_${uri}_$title"
 
     /** 删除整个看板列并写回 .md，同时清理该列的置顶与颜色记录 */

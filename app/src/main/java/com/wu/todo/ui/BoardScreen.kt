@@ -187,7 +187,8 @@ fun BoardScreen(
             onDeleteList = { viewModel.deleteSection(openedSection) },
             onSetAllDone = { done -> viewModel.setAllTasks(openedSection, done) },
             onDeleteCompleted = { viewModel.deleteCompletedTasks(openedSection) },
-            onRefresh = viewModel::reload
+            onRefresh = viewModel::reload,
+            onSetDotColor = { argb -> viewModel.setSectionColor(openedSection, argb) }
         )
         return
     }
@@ -409,7 +410,8 @@ private fun SectionDetailScreen(
     onDeleteList: () -> Unit,
     onSetAllDone: (Boolean) -> Unit,
     onDeleteCompleted: () -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onSetDotColor: (Int) -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     var completedExpanded by remember { mutableStateOf(true) }
@@ -643,11 +645,17 @@ private fun SectionDetailScreen(
                         }
                         .padding(vertical = 4.dp)
                 ) {
+                    // 点击圆点：在调色板中循环切换本列颜色
                     Box(
                         modifier = Modifier
                             .size(20.dp)
                             .clip(CircleShape)
                             .background(dotColor)
+                            .clickable {
+                                // ListPalette 为 Long 字面量列表，与 ARGB Int 转换比较
+                                val idx = ListPalette.indexOf(dotColor.toArgb().toLong())
+                                onSetDotColor(ListPalette[(idx + 1) % ListPalette.size].toInt())
+                            }
                     )
                     Spacer(Modifier.width(16.dp))
                     Text(
@@ -658,15 +666,9 @@ private fun SectionDetailScreen(
                         lineHeight = 26.sp,
                         modifier = Modifier.weight(1f)
                     )
-                    Icon(
-                        Icons.Filled.Edit,
-                        contentDescription = "重命名列标题",
-                        tint = WuSubtle,
-                        modifier = Modifier.size(16.dp)
-                    )
                 }
             }
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(4.dp))
 
             // 未完成任务
             if (activeTasks.isEmpty() && doneTasks.isEmpty()) {
