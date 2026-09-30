@@ -419,24 +419,18 @@ private fun SectionDetailScreen(
     var newTaskText by remember { mutableStateOf("") }
     // 当前正在编辑的任务（null 表示未打开编辑页）
     var editingTask by remember { mutableStateOf<KanbanTask?>(null) }
-    // 标题编辑状态
-    var editingTitle by remember(section.uniqueKey()) { mutableStateOf(false) }
-    var titleDraft by remember(section.uniqueKey()) { mutableStateOf(section.title) }
-    // 点击圆点：在调色板中循环切换本列颜色（编辑态/展示态共用）
+    // 点击列标题：弹出列表编辑页（改名称 + 调色板换色 + 删除列表）
+    var showEditSheet by remember(section.uniqueKey()) { mutableStateOf(false) }
+    // 点击圆点：在调色板中循环切换本列颜色
     val cycleDotColor = {
         val idx = ListPalette.indexOf(dotColor.toArgb().toLong())
         onSetDotColor(ListPalette[(idx + 1) % ListPalette.size].toInt())
     }
 
-    // 系统返回键/手势：回到看板主界面（编辑标题时先退出编辑）
-    // 添加任务/编辑任务窗口打开时禁用此回调，由 KeyboardSheet 自己的 BackHandler 处理返回（只关窗口）
-    BackHandler(enabled = !showAddSheet && editingTask == null) {
-        if (editingTitle) {
-            editingTitle = false
-            titleDraft = section.title
-        } else {
-            onBack()
-        }
+    // 系统返回键/手势：回到看板主界面
+    // 添加任务/编辑任务/编辑列表窗口打开时禁用此回调，由 KeyboardSheet 自己的 BackHandler 处理返回（只关窗口）
+    BackHandler(enabled = !showAddSheet && editingTask == null && !showEditSheet) {
+        onBack()
     }
 
     val activeTasks = section.tasks.filter { !it.done }
@@ -502,8 +496,7 @@ private fun SectionDetailScreen(
                             },
                             onClick = {
                                 menuExpanded = false
-                                titleDraft = section.title
-                                editingTitle = true
+                                showEditSheet = true
                             }
                         )
                         DropdownMenuItem(
@@ -607,75 +600,32 @@ private fun SectionDetailScreen(
                 .padding(horizontal = 24.dp)
         ) {
             Spacer(Modifier.height(8.dp))
-            // 列标题：红色圆点 + 大号标题（点击进入编辑）
-            if (editingTitle) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // 编辑态同样可以点击圆点换色
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(dotColor)
-                            .clickable { cycleDotColor() }
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    OutlinedTextField(
-                        value = titleDraft,
-                        onValueChange = { titleDraft = it },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = WuTitle
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = {
-                        editingTitle = false
-                        titleDraft = section.title
-                    }) {
-                        Icon(Icons.Filled.Close, contentDescription = "取消编辑", tint = WuSubtle)
-                    }
-                    IconButton(onClick = {
-                        onRename(titleDraft)
-                        editingTitle = false
-                    }) {
-                        Icon(Icons.Filled.Check, contentDescription = "保存标题", tint = WuAccent)
-                    }
-                }
-            } else {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+            // 列标题：彩色圆点 + 大号标题（点击标题弹出列表编辑页）
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { showEditSheet = true }
+                    .padding(vertical = 4.dp)
+            ) {
+                // 点击圆点：在调色板中循环切换本列颜色
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable {
-                            titleDraft = section.title
-                            editingTitle = true
-                        }
-                        .padding(vertical = 4.dp)
-                ) {
-                    // 点击圆点：在调色板中循环切换本列颜色
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(dotColor)
-                            .clickable { cycleDotColor() }
-                    )
-                    Spacer(Modifier.width(16.dp))
-                    Text(
-                        text = section.title,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = WuTitle,
-                        lineHeight = 26.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                        .clickable { cycleDotColor() }
+                )
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    text = section.title,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WuTitle,
+                    lineHeight = 26.sp,
+                    modifier = Modifier.weight(1f)
+                )
             }
             Spacer(Modifier.height(15.dp))
 
@@ -832,6 +782,159 @@ private fun SectionDetailScreen(
             onDelete = onDelete,
             onSetDotColor = onSetDotColor
         )
+    }
+
+    // 底部弹出：列表编辑页（改名称 + 调色板换色 + 删除列表）
+    if (showEditSheet) {
+        EditSectionSheet(
+            section = section,
+            dotColor = dotColor,
+            onDismiss = { showEditSheet = false },
+            onRename = onRename,
+            onDelete = onDeleteList,
+            onSetDotColor = onSetDotColor
+        )
+    }
+}
+
+/** 底部弹出：列表编辑页（拖动条 + 删除列表 + 改名称 + 调色板换色 + 保存） */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditSectionSheet(
+    section: KanbanSection,
+    dotColor: Color,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit,
+    onSetDotColor: (Int) -> Unit
+) {
+    var title by remember { mutableStateOf(section.title) }
+    var paletteOpen by remember { mutableStateOf(false) }
+    val titleFocus = remember { FocusRequester() }
+
+    KeyboardSheet(onDismiss = onDismiss, focus = titleFocus) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+            // 顶部拖动条装饰
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .width(36.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(WuDivider)
+            )
+            // 右上角：删除列表
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                IconButton(onClick = { onDelete(); onDismiss() }) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "删除列表",
+                        tint = WuSubtle,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+            // 列表名称输入（大号粗体）
+            TextField(
+                value = title,
+                onValueChange = { title = it },
+                placeholder = { Text("List name", color = WuSubtle, fontSize = 22.sp) },
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WuTitle
+                ),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = WuAccent
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(titleFocus)
+            )
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            // 调色板行：点击调色板图标或圆点展开/收起颜色网格，点选即换列颜色
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 12.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Palette,
+                    contentDescription = "调色板",
+                    tint = WuSubtle,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .clickable { paletteOpen = !paletteOpen }
+                )
+                Spacer(Modifier.width(18.dp))
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                        .clickable { paletteOpen = !paletteOpen }
+                )
+            }
+            if (paletteOpen) {
+                // 颜色网格：每行 8 个，当前颜色带白色对勾，点选后收起
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.padding(bottom = 14.dp)
+                ) {
+                    ListPalette.chunked(8).forEach { rowColors ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            rowColors.forEach { c ->
+                                val selected = c == dotColor.toArgb().toLong()
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(c.toInt()))
+                                        .clickable {
+                                            onSetDotColor(c.toInt())
+                                            paletteOpen = false
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (selected) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // 右下角黄色对勾：保存标题修改
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                FloatingActionButton(
+                    onClick = {
+                        if (title.isNotBlank() && title.trim() != section.title) {
+                            onRename(title.trim())
+                        }
+                        onDismiss()
+                    },
+                    containerColor = WuFab,
+                    contentColor = WuTitle
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = "保存")
+                }
+            }
+        }
     }
 }
 
