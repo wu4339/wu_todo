@@ -982,11 +982,7 @@ private fun EditSectionSheet(
     KeyboardSheet(onDismiss = onDismiss, focus = titleFocus) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                // 大面板（参考截图）：占屏高约 68%，内容在顶部、保存按钮沉底，
-                // 调色板网格在窗口内部展开，窗口大小保持不变
-                .height(LocalConfiguration.current.screenHeightDp.dp * 0.68f)
-                .padding(horizontal = 20.dp)
+                .fillMaxSize()
         ) {
             // 顶部拖动条装饰
             Box(
@@ -1227,7 +1223,8 @@ private fun KeyboardSheet(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .imePadding()
+                // 面板总高恒定 = 屏高 - 60dp：顶部恒离屏顶 60dp，且不随键盘升降重排（消除收键盘时的抖动）
+                .height(fullScreenH - 60.dp)
                 .offset(y = panelOffsetY)
                 .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                 .clickable(
@@ -1244,7 +1241,15 @@ private fun KeyboardSheet(
                     delay(16)
                 }
             }
-            content()
+            // 键盘避让：imePadding 加在内部内容区，键盘升起时内容上移、面板盒子高度恒定不变
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding()
+                    .padding(horizontal = 20.dp)
+            ) {
+                content()
+            }
         }
         // 内部浮层画在面板之上（不用系统 Popup，避免抢焦点导致键盘收起、误触发关闭）
         overlay?.invoke(this)
@@ -1290,11 +1295,6 @@ private fun TaskEditSheet(
         }
     }
 
-    // 面板高度 = 屏高 - 键盘高度 - 40dp：顶部始终离屏幕顶约 40dp，底部随键盘同步
-    val density = LocalDensity.current
-    val imeDp = with(density) { WindowInsets.ime.getBottom(this).toDp() }
-    val screenH = LocalConfiguration.current.screenHeightDp.dp
-
     // 选 Note / Subtask 后：光标自动聚焦到对应输入框（持续抢焦点，覆盖面板初始拉焦循环）
     LaunchedEffect(addItemState) {
         when (addItemState) {
@@ -1326,10 +1326,7 @@ private fun TaskEditSheet(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                // 面板增高：顶部离屏幕顶约 60dp（高度随键盘动态），保存按钮沉底
-                .height(screenH - imeDp - 60.dp)
-                .padding(horizontal = 20.dp)
+                .fillMaxSize()
         ) {
             // 标题 + 删除键 同一行：标题占满左侧（紧贴面板顶部，离屏顶 60dp），删除键沉到右端
             Row(
@@ -2041,20 +2038,11 @@ private fun AddListSheet(
     var colorIdx by remember { mutableStateOf(0) }
     var paletteOpen by remember { mutableStateOf(false) }
 
-    // 与任务编辑窗一致：顶部离屏幕顶约 60dp（高度随键盘动态）
-    val density = LocalDensity.current
-    val imeDp = with(density) { WindowInsets.ime.getBottom(this).toDp() }
-    val screenH = LocalConfiguration.current.screenHeightDp.dp
-
     val titleFocus = remember { FocusRequester() }
     KeyboardSheet(onDismiss = onDismiss, focus = titleFocus) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                // 大面板：顶部离屏幕顶约 60dp（高度随键盘动态），内容在顶部、保存按钮沉底，
-                // 调色板网格在窗口内部展开，窗口大小保持不变
-                .height(screenH - imeDp - 60.dp)
-                .padding(horizontal = 20.dp)
+                .fillMaxSize()
         ) {
             // 列表名称输入
             TextField(
