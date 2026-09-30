@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -18,10 +19,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -299,20 +300,48 @@ fun BoardScreen(
             else -> {
                 val pinnedSections = state.sections.filter { it.title in state.pinnedTitles }
                 val normalSections = state.sections.filter { it.title !in state.pinnedTitles }
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = innerPadding,
+                // 瀑布流（StaggeredGrid）：卡片按自身高度紧密堆叠，
+                // 不再像普通 Grid 那样按行对齐而在矮卡片下方留出空白
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(12.dp)
+                        .padding(innerPadding)
                 ) {
-                    if (pinnedSections.isNotEmpty()) {
-                        item(key = "pinned_header", span = { GridItemSpan(2) }) {
-                            PinnedHeader()
+                    LazyVerticalStaggeredGrid(
+                        columns = StaggeredGridCells.Fixed(2),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalItemSpacing = 12.dp,
+                        contentPadding = PaddingValues(
+                            start = 12.dp,
+                            end = 12.dp,
+                            top = 12.dp,
+                            bottom = 96.dp
+                        ),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        if (pinnedSections.isNotEmpty()) {
+                            item(key = "pinned_header", span = StaggeredGridItemSpan.FullLine) {
+                                PinnedHeader()
+                            }
+                            items(pinnedSections, key = { "p_${it.uniqueKey()}" }) { section ->
+                                SectionCard(
+                                    section = section,
+                                    dotColor = Color(state.sectionColors[section.title] ?: WuAccent.toArgb()),
+                                    onToggle = viewModel::toggle,
+                                    onOpen = { openedSectionKey = section.uniqueKey() }
+                                )
+                            }
+                            if (normalSections.isNotEmpty()) {
+                                item(key = "pinned_divider", span = StaggeredGridItemSpan.FullLine) {
+                                    HorizontalDivider(
+                                        color = WuDivider,
+                                        thickness = 1.dp,
+                                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                    )
+                                }
+                            }
                         }
-                        items(pinnedSections, key = { "p_${it.uniqueKey()}" }) { section ->
+                        items(normalSections, key = { it.uniqueKey() }) { section ->
                             SectionCard(
                                 section = section,
                                 dotColor = Color(state.sectionColors[section.title] ?: WuAccent.toArgb()),
@@ -320,23 +349,6 @@ fun BoardScreen(
                                 onOpen = { openedSectionKey = section.uniqueKey() }
                             )
                         }
-                        if (normalSections.isNotEmpty()) {
-                            item(key = "pinned_divider", span = { GridItemSpan(2) }) {
-                                HorizontalDivider(
-                                    color = WuDivider,
-                                    thickness = 1.dp,
-                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                                )
-                            }
-                        }
-                    }
-                    items(normalSections, key = { it.uniqueKey() }) { section ->
-                        SectionCard(
-                            section = section,
-                            dotColor = Color(state.sectionColors[section.title] ?: WuAccent.toArgb()),
-                            onToggle = viewModel::toggle,
-                            onOpen = { openedSectionKey = section.uniqueKey() }
-                        )
                     }
                 }
             }
@@ -693,13 +705,17 @@ private fun SectionDetailScreen(
     if (showAddSheet) {
         val addFocus = remember { FocusRequester() }
         val keyboard = LocalSoftwareKeyboardController.current
+        val addSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
             onDismissRequest = { showAddSheet = false },
-            containerColor = WuCard
+            containerColor = WuCard,
+            sheetState = addSheetState
         ) {
+            // 等面板展开动画结束再请求焦点，否则焦点被动画吞掉、软键盘不弹
             LaunchedEffect(Unit) {
-                delay(250)
+                delay(320)
                 addFocus.requestFocus()
+                delay(60)
                 keyboard?.show()
             }
             Row(
@@ -1033,11 +1049,11 @@ private fun CompletedTaskRow(
 private fun BigCheckCircle(done: Boolean) {
     Box(
         modifier = Modifier
-            .size(22.dp)
+            .size(20.dp)
             .clip(CircleShape)
             .then(
                 if (done) Modifier.background(WuAccent)
-                else Modifier.border(2.dp, WuCircleStroke, CircleShape)
+                else Modifier.border(1.5.dp, WuCircleStroke, CircleShape)
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -1046,7 +1062,7 @@ private fun BigCheckCircle(done: Boolean) {
                 imageVector = Icons.Filled.Check,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(13.dp)
             )
         }
     }
@@ -1134,8 +1150,8 @@ private fun TaskRow(
             .clickable { onOpen() }
             .padding(start = (task.indent * 10).dp, top = 5.dp, bottom = 5.dp)
     ) {
-        CheckCircle(done = task.done, size = 16.dp, onClick = { onToggle(task) })
-        Spacer(Modifier.width(12.dp))
+        CheckCircle(done = task.done, size = 14.dp, onClick = { onToggle(task) })
+        Spacer(Modifier.width(10.dp))
         Text(
             text = task.text,
             fontSize = 13.sp,
@@ -1161,7 +1177,7 @@ private fun CheckCircle(
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .then(
                 if (done) Modifier.background(WuAccent)
-                else Modifier.border(2.dp, WuCircleStroke, CircleShape)
+                else Modifier.border(1.5.dp, WuCircleStroke, CircleShape)
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -1170,7 +1186,7 @@ private fun CheckCircle(
                 imageVector = Icons.Filled.Check,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(size * 0.62f)
+                modifier = Modifier.size(size * 0.6f)
             )
         }
     }
@@ -1296,12 +1312,21 @@ private fun AddListSheet(
     var title by remember { mutableStateOf("") }
     var colorIdx by remember { mutableStateOf(0) }
 
+    val titleFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = WuCard,
         sheetState = sheetState
     ) {
+        // 面板展开后自动聚焦名称输入框并弹出软键盘
+        LaunchedEffect(Unit) {
+            delay(320)
+            titleFocus.requestFocus()
+            delay(60)
+            keyboard?.show()
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1326,7 +1351,9 @@ private fun AddListSheet(
                     unfocusedIndicatorColor = Color.Transparent,
                     cursorColor = WuAccent
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(titleFocus)
             )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
             // 调色板：点击换色，圆点显示当前颜色
