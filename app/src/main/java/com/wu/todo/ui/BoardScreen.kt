@@ -1648,6 +1648,7 @@ private fun AddListSheet(
 ) {
     var title by remember { mutableStateOf("") }
     var colorIdx by remember { mutableStateOf(0) }
+    var paletteOpen by remember { mutableStateOf(false) }
 
     val titleFocus = remember { FocusRequester() }
     KeyboardSheet(onDismiss = onDismiss, focus = titleFocus) {
@@ -1655,6 +1656,8 @@ private fun AddListSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
+                // 面板整体上移 40dp，避免贴着键盘太近
+                .padding(bottom = 40.dp)
         ) {
             // 列表名称输入
             TextField(
@@ -1679,7 +1682,7 @@ private fun AddListSheet(
                     .focusRequester(titleFocus)
             )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            // 调色板：点击换色，圆点显示当前颜色
+            // 调色板行：点击调色板图标或圆点展开/收起颜色网格
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(vertical = 12.dp)
@@ -1691,7 +1694,7 @@ private fun AddListSheet(
                     modifier = Modifier
                         .size(22.dp)
                         .clip(CircleShape)
-                        .clickable { colorIdx = (colorIdx + 1) % ListPalette.size }
+                        .clickable { paletteOpen = !paletteOpen }
                 )
                 Spacer(Modifier.width(18.dp))
                 Box(
@@ -1699,9 +1702,44 @@ private fun AddListSheet(
                         .size(24.dp)
                         .clip(CircleShape)
                         .background(Color(ListPalette[colorIdx].toInt()))
-                        .clickable { colorIdx = (colorIdx + 1) % ListPalette.size }
+                        .clickable { paletteOpen = !paletteOpen }
                 )
                 Spacer(Modifier.weight(1f))
+            }
+            if (paletteOpen) {
+                // 颜色网格：每行 8 个，当前颜色带白色对勾，点选后收起
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.padding(bottom = 14.dp)
+                ) {
+                    ListPalette.chunked(8).forEachIndexed { rowIdx, rowColors ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            rowColors.forEachIndexed { colIdx, c ->
+                                val absIdx = rowIdx * 8 + colIdx
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(c.toInt()))
+                                        .clickable {
+                                            colorIdx = absIdx
+                                            paletteOpen = false
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (absIdx == colorIdx) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Spacer(Modifier.height(16.dp))
             // 右下角黄色对勾：保存
