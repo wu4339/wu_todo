@@ -1202,11 +1202,6 @@ private fun KeyboardSheet(
     val scrimAlpha = 0.32f * (1f - pAnim.value.coerceIn(0f, 1f))
     // 面板整体偏移：进入/关闭/侧滑都走 pAnim，单一动画源
     val panelOffsetY = fullScreenH * pAnim.value
-    // 面板总高恒为 fullScreenH-60：常态靠"内容高 screenH-imeDp-60 + 外层 imePadding(imeDp)"拼出；
-    // 关闭时内容高改为恒定 screenH-60 并去掉 imePadding，使总高始终 screenH-60，键盘收起全程不再重排，
-    // 消除"内容高 + 底部 padding"实时变化叠加下滑动画导致的抖动（reflow）
-    val imeDpNow = with(density) { WindowInsets.ime.getBottom(this).toDp() }
-    val panelHeight = if (closing) fullScreenH - 60.dp else fullScreenH - imeDpNow - 60.dp
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1220,8 +1215,7 @@ private fun KeyboardSheet(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .then(if (closing) Modifier else Modifier.imePadding())
-                .height(panelHeight)
+                .imePadding()
                 .offset(y = panelOffsetY)
                 .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                 .clickable(
@@ -1284,6 +1278,11 @@ private fun TaskEditSheet(
         }
     }
 
+    // 面板高度 = 屏高 - 键盘高度 - 40dp：顶部始终离屏幕顶约 40dp，底部随键盘同步
+    val density = LocalDensity.current
+    val imeDp = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+    val screenH = LocalConfiguration.current.screenHeightDp.dp
+
     // 选 Note / Subtask 后：光标自动聚焦到对应输入框（持续抢焦点，覆盖面板初始拉焦循环）
     LaunchedEffect(addItemState) {
         when (addItemState) {
@@ -1316,35 +1315,12 @@ private fun TaskEditSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight()
+                // 面板增高：顶部离屏幕顶约 60dp（高度随键盘动态），保存按钮沉底
+                .height(screenH - imeDp - 60.dp)
                 .padding(horizontal = 20.dp)
         ) {
-            // 任务标题 + 右上角删除按钮（同一行：标题紧贴面板顶部 = 离屏顶 60dp，删除键沉到右端）
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    placeholder = { Text("任务内容", color = WuSubtle, fontSize = 20.sp) },
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = WuTitle
-                    ),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                        cursorColor = WuAccent
-                    ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(textFocus)
-                )
+            // 顶部：右上角删除按钮
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 IconButton(onClick = { onDelete(task); onDismiss() }) {
                     Icon(
                         Icons.Filled.Delete,
@@ -1354,6 +1330,28 @@ private fun TaskEditSheet(
                     )
                 }
             }
+            // 任务文本编辑（大号粗体）
+            TextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = { Text("任务内容", color = WuSubtle, fontSize = 20.sp) },
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WuTitle
+                ),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = WuAccent
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(textFocus)
+            )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
             // 移动到其他列
             Row(
@@ -2029,12 +2027,19 @@ private fun AddListSheet(
     var colorIdx by remember { mutableStateOf(0) }
     var paletteOpen by remember { mutableStateOf(false) }
 
+    // 与任务编辑窗一致：顶部离屏幕顶约 60dp（高度随键盘动态）
+    val density = LocalDensity.current
+    val imeDp = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+    val screenH = LocalConfiguration.current.screenHeightDp.dp
+
     val titleFocus = remember { FocusRequester() }
     KeyboardSheet(onDismiss = onDismiss, focus = titleFocus) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight()
+                // 大面板：顶部离屏幕顶约 60dp（高度随键盘动态），内容在顶部、保存按钮沉底，
+                // 调色板网格在窗口内部展开，窗口大小保持不变
+                .height(screenH - imeDp - 60.dp)
                 .padding(horizontal = 20.dp)
         ) {
             // 列表名称输入
