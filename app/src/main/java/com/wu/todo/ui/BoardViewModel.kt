@@ -188,6 +188,21 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /** 拖动排序：按新的任务行号顺序重排某一列并写回 .md */
+    fun reorderTasks(section: KanbanSection, orderedTaskLineIndexes: List<Int>) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        if (orderedTaskLineIndexes.isEmpty()) return
+
+        val newLines = KanbanParser.reorderTasks(cur.lines, section.headerLineIndex, orderedTaskLineIndexes)
+        if (newLines == cur.lines) return
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
     /** 给任务添加一个缩进子任务并写回 .md */
     fun addSubtask(task: KanbanTask, text: String) {
         val cur = state.value

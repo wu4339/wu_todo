@@ -10,9 +10,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -96,9 +98,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -109,7 +115,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -122,6 +132,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.wu.todo.R
 import com.wu.todo.data.KanbanSection
 import com.wu.todo.data.KanbanTask
@@ -175,6 +186,8 @@ fun BoardScreen(
         SectionDetailScreen(
             section = openedSection,
             sections = state.sections,
+            sectionColors = state.sectionColors,
+            onReorderTasks = viewModel::reorderTasks,
             pinned = openedSection.title in state.pinnedTitles,
             dotColor = Color(state.sectionColors[openedSection.title] ?: WuAccent.toArgb()),
             snackbarHostState = snackbarHostState,
@@ -398,6 +411,8 @@ fun BoardScreen(
 private fun SectionDetailScreen(
     section: KanbanSection,
     sections: List<KanbanSection>,
+    sectionColors: Map<String, Int>,
+    onReorderTasks: (KanbanSection, List<Int>) -> Unit,
     pinned: Boolean,
     dotColor: Color,
     snackbarHostState: SnackbarHostState,
@@ -440,6 +455,24 @@ private fun SectionDetailScreen(
 
     val activeTasks = section.tasks.filter { !it.done }
     val doneTasks = section.tasks.filter { it.done }
+
+    // ---- 长按拖动排序 ----
+    val sortKey = section.uniqueKey()
+    // 拖动中的显示顺序（任务 id）；null = 未拖动
+    var dragOrder by remember(sortKey) { mutableStateOf<List<String>?>(null) }
+    var dragTaskId by remember(sortKey) { mutableStateOf<String?>(null) }
+    var dragOffset by remember(sortKey) { mutableFloatStateOf(0f) }
+    val rowTops = remember(sortKey) { mutableStateMapOf<String, Float>() }
+    val rowHeights = remember(sortKey) { mutableStateMapOf<String, Float>() }
+    // pointerInput 的 lambda 只在首次创建时捕获变量，用 State 才能读到最新值
+    val dragOrderState = rememberUpdatedState(dragOrder)
+    val activeTasksState = rememberUpdatedState(activeTasks)
+    val reorderState = rememberUpdatedState(onReorderTasks)
+    val sectionState = rememberUpdatedState(section)
+    // 拖动中按本地顺序渲染，实现"其它行让位"；松手后一次性提交排序
+    val displayedTasks = dragOrder?.let { order ->
+        order.mapNotNull { id -> activeTasks.firstOrNull { it.id == id } }
+    } ?: activeTasks
 
     Scaffold(
         containerColor = WuBackground,
@@ -659,13 +692,111 @@ private fun SectionDetailScreen(
                     Text("Press + to add the task", fontSize = 15.sp, color = WuSubtle)
                 }
             } else {
-                activeTasks.forEach { task ->
-                    DetailTaskRow(
-                        task = task,
-                        onToggle = onToggle,
-                        onEdit = { editingTask = it }
-                    )
-                }
+                displayedTasks.forEach { task -> key(task.id) {
+                    val dragging = dragTaskId == task.id
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .zIndex(if (dragging) 1f else 0f)
+                            .graphicsLayer { translationY = if (dragging) dragOffset else 0f }
+                            .shadow(
+                                elevation = if (dragging) 8.dp else 0.dp,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .background(
+                                color = if (dragging) WuCard else Color.Transparent,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .onGloballyPositioned { coords ->
+                                rowTops[task.id] = coords.positionInWindow().y
+                                rowHeights[task.id] = coords.size.height.toFloat()
+                            }
+                            .pointerInput(task.id) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        dragTaskId = task.id
+                                        dragOffset = 0f
+                                        // 以当前实际顺序作为拖动基准快照
+                                        dragOrder = activeTasksState.value.map { it.id }
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        if (dragOrderState.value == null) return@detectDragGesturesAfterLongPress
+                                        dragOffset += amount.y
+                                        var top = rowTops[task.id] ?: 0f
+                                        val h = rowHeights[task.id] ?: 0f
+                                        // 越过相邻行中位线即交换（相邻交换 + 位移补偿，保证视觉连续）
+                                        var guard = 0
+                                        var swapped = true
+                                        while (swapped && guard++ < 12) {
+                                            swapped = false
+                                            val cur = dragOrderState.value ?: break
+                                            val i = cur.indexOf(task.id)
+                                            if (i < 0) break
+                                            var center = top + h / 2 + dragOffset
+                                            if (i < cur.size - 1) {
+                                                val nid = cur[i + 1]
+                                                val nt = rowTops[nid] ?: 0f
+                                                val nh = rowHeights[nid] ?: 0f
+                                                if (center > nt + nh / 2) {
+                                                    val next = cur.toMutableList()
+                                                    next[i] = nid
+                                                    next[i + 1] = task.id
+                                                    dragOrder = next
+                                                    dragOffset -= (nt - top)
+                                                    top = nt
+                                                    center = top + h / 2 + dragOffset
+                                                    swapped = true
+                                                }
+                                            }
+                                            if (!swapped && i > 0) {
+                                                val pid = cur[i - 1]
+                                                val pt = rowTops[pid] ?: 0f
+                                                val ph = rowHeights[pid] ?: 0f
+                                                if (center < pt + ph / 2) {
+                                                    val next = cur.toMutableList()
+                                                    next[i] = pid
+                                                    next[i - 1] = task.id
+                                                    dragOrder = next
+                                                    dragOffset += (top - pt)
+                                                    top = pt
+                                                    swapped = true
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        val order = dragOrderState.value
+                                        dragTaskId = null
+                                        dragOffset = 0f
+                                        dragOrder = null
+                                        if (order != null) {
+                                            val tasks = activeTasksState.value
+                                            val lineOrder = order.mapNotNull { id ->
+                                                tasks.firstOrNull { it.id == id }?.lineIndex
+                                            }
+                                            if (lineOrder.size == tasks.size &&
+                                                lineOrder != tasks.map { it.lineIndex }
+                                            ) {
+                                                reorderState.value(sectionState.value, lineOrder)
+                                            }
+                                        }
+                                    },
+                                    onDragCancel = {
+                                        dragTaskId = null
+                                        dragOffset = 0f
+                                        dragOrder = null
+                                    }
+                                )
+                            }
+                    ) {
+                        DetailTaskRow(
+                            task = task,
+                            onToggle = onToggle,
+                            onEdit = { editingTask = it }
+                        )
+                    }
+                } }
             }
 
             // 已完成：折叠区
@@ -779,6 +910,7 @@ private fun SectionDetailScreen(
             task = t,
             sections = sections,
             currentSection = section,
+            sectionColors = sectionColors,
             dotColor = dotColor,
             onDismiss = { editingTask = null },
             onRenameTask = onRenameTask,
@@ -958,6 +1090,11 @@ private fun EditSectionSheet(
 private fun KeyboardSheet(
     focus: FocusRequester,
     onDismiss: () -> Unit,
+    /** 面板内部叠加的自绘浮层（如"移动到其他列"选择面板）。必须画在面板内容之上，
+     *  且不能使用系统 Popup/DropdownMenu——那会抢占窗口焦点使键盘收起，触发误关闭 */
+    overlay: (@Composable BoxScope.() -> Unit)? = null,
+    /** 键盘被系统收起时是否联动关闭面板（打开内部浮层时需临时关掉） */
+    imeAutoClose: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -992,12 +1129,14 @@ private fun KeyboardSheet(
     val imeInsets = WindowInsets.ime  // 组合期取值（@Composable 属性不能在协程内读取）
     val density = LocalDensity.current
     var imeSeen by remember { mutableStateOf(false) }
+    // 用 rememberUpdatedState 读取最新开关，避免 imeAutoClose 变化时重启该协程
+    val autoClose by rememberUpdatedState(imeAutoClose)
     LaunchedEffect(Unit) {
         snapshotFlow { imeInsets.getBottom(density) > 0 }
             .collect { visible ->
                 if (visible) {
                     imeSeen = true
-                } else if (imeSeen && !closing) {
+                } else if (imeSeen && !closing && autoClose) {
                     closing = true
                 }
             }
@@ -1046,6 +1185,8 @@ private fun KeyboardSheet(
             }
             content()
         }
+        // 内部浮层画在面板之上（不用系统 Popup，避免抢焦点导致键盘收起、误触发关闭）
+        overlay?.invoke(this)
     }
 }
 
@@ -1056,6 +1197,8 @@ private fun TaskEditSheet(
     task: KanbanTask,
     sections: List<KanbanSection>,
     currentSection: KanbanSection,
+    /** 各列圆点颜色（列名 -> ARGB），用于"移动到其他列"面板里的圆点 */
+    sectionColors: Map<String, Int>,
     dotColor: Color,
     onDismiss: () -> Unit,
     onRenameTask: (KanbanTask, String) -> Unit,
@@ -1066,7 +1209,8 @@ private fun TaskEditSheet(
     onSetDotColor: (Int) -> Unit
 ) {
     var text by remember(task.id) { mutableStateOf(task.text) }
-    var moveMenu by remember { mutableStateOf(false) }
+    // "移动到其他列"选择面板：必须用应用内自绘浮层（系统 Popup 会抢焦点使键盘收起 → 面板被误关闭）
+    var moveSheetOpen by remember(task.id) { mutableStateOf(false) }
     // Add items 交互状态：0=收起 1=选项菜单(Note/Subtask) 2=备注输入 3=子任务输入
     var addItemState by remember(task.id) { mutableStateOf(0) }
     var subText by remember { mutableStateOf("") }
@@ -1074,6 +1218,16 @@ private fun TaskEditSheet(
     val textFocus = remember { FocusRequester() }
     val noteFocus = remember { FocusRequester() }
     val subFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // 打开选择面板时收起键盘（面板落到底部）；从面板返回时恢复输入焦点与键盘
+    LaunchedEffect(moveSheetOpen) {
+        if (moveSheetOpen) {
+            repeat(24) { keyboard?.hide(); delay(16) }
+        } else {
+            repeat(6) { textFocus.requestFocus(); keyboard?.show(); delay(16) }
+        }
+    }
 
     // 面板高度 = 屏高 - 键盘高度 - 40dp：顶部始终离屏幕顶约 40dp，底部随键盘同步
     val density = LocalDensity.current
@@ -1089,7 +1243,26 @@ private fun TaskEditSheet(
     }
 
     // 键盘一体化面板：出现即拉起键盘，面板随键盘同步升起
-    KeyboardSheet(onDismiss = onDismiss, focus = textFocus) {
+    KeyboardSheet(
+        onDismiss = onDismiss,
+        focus = textFocus,
+        imeAutoClose = !moveSheetOpen,
+        overlay = {
+            if (moveSheetOpen) {
+                MoveToListPanel(
+                    sections = sections,
+                    currentSection = currentSection,
+                    sectionColors = sectionColors,
+                    onPick = { target ->
+                        moveSheetOpen = false
+                        onMoveTask(task, target)
+                        onDismiss()
+                    },
+                    onCancel = { moveSheetOpen = false }
+                )
+            }
+        }
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1143,43 +1316,21 @@ private fun TaskEditSheet(
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(Modifier.width(14.dp))
-                Box {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(WuAccent.copy(alpha = 0.12f))
-                            .clickable { moveMenu = true }
-                            .padding(horizontal = 14.dp, vertical = 6.dp)
-                    ) {
-                        Text(currentSection.title, fontSize = 13.sp, color = WuAccent)
-                        Icon(
-                            Icons.Filled.ArrowDropDown,
-                            contentDescription = "选择列",
-                            tint = WuAccent,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = moveMenu,
-                        onDismissRequest = { moveMenu = false }
-                    ) {
-                        sections.forEach { s ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        s.title,
-                                        color = if (s.headerLineIndex == currentSection.headerLineIndex) WuSubtle else WuTitle
-                                    )
-                                },
-                                onClick = {
-                                    moveMenu = false
-                                    onMoveTask(task, s)
-                                    onDismiss()
-                                }
-                            )
-                        }
-                    }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(WuAccent.copy(alpha = 0.12f))
+                        .clickable { moveSheetOpen = true }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(currentSection.title, fontSize = 13.sp, color = WuAccent)
+                    Icon(
+                        Icons.Filled.ArrowDropDown,
+                        contentDescription = "选择列",
+                        tint = WuAccent,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
@@ -1332,6 +1483,94 @@ private fun TaskEditSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+/**
+ * "Select a list to move to" 底部选择面板（画在编辑面板之上）。
+ *
+ * 刻意不用 DropdownMenu / Popup：系统弹窗会夺走窗口焦点，使输入法收起，
+ * 从而触发 KeyboardSheet 的"键盘收起即关闭"逻辑，编辑面板被误关闭。
+ */
+@Composable
+private fun BoxScope.MoveToListPanel(
+    sections: List<KanbanSection>,
+    currentSection: KanbanSection,
+    sectionColors: Map<String, Int>,
+    onPick: (KanbanSection) -> Unit,
+    onCancel: () -> Unit
+) {
+    // 遮罩：点击空白处返回编辑面板
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.32f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onCancel() }
+    )
+    Column(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .fillMaxHeight(0.85f)
+            .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { /* 吃掉面板内点击 */ }
+    ) {
+        // 顶部拖动条装饰
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 10.dp, bottom = 14.dp)
+                .width(36.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(WuDivider)
+        )
+        Text(
+            "Select a list to move to",
+            fontSize = 16.sp,
+            color = WuSubtle,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)
+        )
+        HorizontalDivider(color = WuDivider, thickness = 1.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 8.dp)
+        ) {
+            sections.forEach { s ->
+                val isCurrent = s.headerLineIndex == currentSection.headerLineIndex
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(enabled = !isCurrent) { onPick(s) }
+                        .padding(horizontal = 24.dp, vertical = 15.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(13.dp)
+                            .clip(CircleShape)
+                            .background(Color(sectionColors[s.title] ?: WuAccent.toArgb()))
+                    )
+                    Spacer(Modifier.width(18.dp))
+                    Text(
+                        s.title,
+                        fontSize = 16.sp,
+                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isCurrent) WuSubtle else WuTitle
+                    )
+                }
+            }
+            Spacer(Modifier.height(20.dp))
         }
     }
 }

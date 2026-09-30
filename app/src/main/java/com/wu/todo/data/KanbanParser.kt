@@ -262,6 +262,57 @@ object KanbanParser {
         return result
     }
 
+    /**
+     * 重排某一列内的任务顺序（长按拖动排序）。
+     *
+     * [orderedTaskLineIndexes] 为「按原始行号标识的当前顺序」——即拖动前每个顶层任务所在的行号，
+     * 按期望的新顺序排列。每个任务连同其下方的缩进子任务/备注行作为一个整体一起移动；
+     * 列头之后、首个任务之前的行与列尾空行保持原位不动。
+     */
+    fun reorderTasks(
+        lines: List<String>,
+        headerLineIndex: Int,
+        orderedTaskLineIndexes: List<Int>
+    ): List<String> {
+        if (headerLineIndex !in lines.indices) return lines
+        // 找出本列内容区间 [headerLineIndex + 1, end)
+        var end = headerLineIndex + 1
+        while (end < lines.size) {
+            val t = lines[end].trim()
+            if (SECTION_RE.find(t) != null || t.startsWith("%%")) break
+            end++
+        }
+        // 列尾空行留在原位，不参与重排
+        var regionEnd = end
+        while (regionEnd > headerLineIndex + 1 && lines[regionEnd - 1].isBlank()) regionEnd--
+
+        val head = mutableListOf<String>()          // 首个任务行之前的自由行
+        val blocks = LinkedHashMap<Int, MutableList<String>>() // 任务行号 -> 该任务块的全部行
+        var curTaskLine = -1
+        for (i in (headerLineIndex + 1) until regionEnd) {
+            if (TASK_RE.find(lines[i]) != null) {
+                curTaskLine = i
+                blocks[i] = mutableListOf(lines[i])
+            } else if (curTaskLine >= 0) {
+                blocks[curTaskLine]!!.add(lines[i])  // 子任务/备注/空行归入上一个任务块
+            } else {
+                head.add(lines[i])
+            }
+        }
+        if (blocks.isEmpty()) return lines
+        val order = orderedTaskLineIndexes.filter { blocks.containsKey(it) }
+        if (order.size != blocks.size) return lines // 顺序信息不完整，保守不动
+
+        val rebuilt = ArrayList<String>(regionEnd - headerLineIndex - 1)
+        rebuilt.addAll(head)
+        order.forEach { rebuilt.addAll(blocks[it]!!) }
+
+        val result = ArrayList(lines)
+        result.subList(headerLineIndex + 1, regionEnd).clear()
+        result.addAll(headerLineIndex + 1, rebuilt)
+        return result
+    }
+
     /** 任务行下方的连续备注行（缩进非任务非空行）的结束判断 */
     private fun isNoteLine(l: String): Boolean =
         l.isNotBlank() && (l.startsWith(" ") || l.startsWith("\t")) && TASK_RE.find(l) == null
