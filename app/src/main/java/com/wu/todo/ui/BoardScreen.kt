@@ -466,8 +466,10 @@ private fun SectionDetailScreen(
         onBack()
     }
 
-    val activeTasks = section.tasks.filter { !it.done }
-    val doneTasks = section.tasks.filter { it.done }
+    // 子任务不展开：详情页同样只列出顶层任务，子任务以「已完成/总数」计数显示
+    val topTasks = section.topLevelTasks()
+    val activeTasks = topTasks.filter { !it.done }
+    val doneTasks = topTasks.filter { it.done }
 
     // ---- 长按拖动排序 ----
     val sortKey = section.uniqueKey()
@@ -809,14 +811,28 @@ private fun SectionDetailScreen(
                                         dragOffset = 0f
                                         dragOrder = null
                                         if (order != null) {
-                                            val tasks = activeTasksState.value
-                                            val lineOrder = order.mapNotNull { id ->
-                                                tasks.firstOrNull { it.id == id }?.lineIndex
+                                            val sec = sectionState.value
+                                            val all = sec.tasks
+                                            val active = activeTasksState.value
+                                            // 拖动只作用于顶层任务；落盘时把「顶层任务 + 其子任务行」
+                                            // 整块按新顺序写回，其它行（已完成任务 / 备注）保持原槽位
+                                            val movedFlat = order.mapNotNull { id ->
+                                                active.firstOrNull { it.id == id }
+                                            }.flatMap { sec.blockLineIndexes(it) }
+                                            val movedSet = movedFlat.toHashSet()
+                                            val newOrder = ArrayList<Int>(all.size)
+                                            var k = 0
+                                            all.forEach { t ->
+                                                if (t.lineIndex in movedSet) {
+                                                    if (k < movedFlat.size) newOrder.add(movedFlat[k++])
+                                                } else {
+                                                    newOrder.add(t.lineIndex)
+                                                }
                                             }
-                                            if (lineOrder.size == tasks.size &&
-                                                lineOrder != tasks.map { it.lineIndex }
+                                            if (newOrder.size == all.size &&
+                                                newOrder != all.map { it.lineIndex }
                                             ) {
-                                                reorderState.value(sectionState.value, lineOrder)
+                                                reorderState.value(sec, newOrder)
                                             }
                                         }
                                     },
@@ -828,8 +844,11 @@ private fun SectionDetailScreen(
                                 )
                             }
                     ) {
+                        val (subDone, subTotal) = section.subtaskProgress(task)
                         DetailTaskRow(
                             task = task,
+                            subtaskDone = subDone,
+                            subtaskTotal = subTotal,
                             onToggle = onToggle,
                             onEdit = { editingTask = it }
                         )
@@ -875,8 +894,11 @@ private fun SectionDetailScreen(
                     Column {
                         Spacer(Modifier.height(4.dp))
                         doneTasks.forEach { task ->
+                            val (subDone, subTotal) = section.subtaskProgress(task)
                             CompletedTaskRow(
                                 task = task,
+                                subtaskDone = subDone,
+                                subtaskTotal = subTotal,
                                 onToggle = onToggle,
                                 onDelete = onDelete,
                                 onEdit = { editingTask = it }
@@ -1630,6 +1652,43 @@ private fun KanbanSection.subtasksOf(task: KanbanTask): List<KanbanTask> {
 }
 
 /**
+ * 列内「顶层任务」：跳过挂在其它任务下面的缩进子任务。
+ * 子任务不再展开成多行，只在父任务下方以「已完成/总数」的计数形式展示。
+ */
+private fun KanbanSection.topLevelTasks(): List<KanbanTask> {
+    val out = ArrayList<KanbanTask>()
+    var i = 0
+    while (i < tasks.size) {
+        val t = tasks[i]
+        out.add(t)
+        var j = i + 1
+        while (j < tasks.size && tasks[j].indent > t.indent) j++
+        i = j
+    }
+    return out
+}
+
+/** 该顶层任务连同其子任务行的原始行号（用于拖动排序时整块移动） */
+private fun KanbanSection.blockLineIndexes(task: KanbanTask): List<Int> {
+    val i = tasks.indexOfFirst { it.lineIndex == task.lineIndex }
+    if (i < 0) return listOf(task.lineIndex)
+    val out = ArrayList<Int>()
+    out.add(task.lineIndex)
+    var j = i + 1
+    while (j < tasks.size && tasks[j].indent > task.indent) {
+        out.add(tasks[j].lineIndex)
+        j++
+    }
+    return out
+}
+
+/** 顶层任务的子任务统计：已完成数 to 总数 */
+private fun KanbanSection.subtaskProgress(task: KanbanTask): Pair<Int, Int> {
+    val subs = subtasksOf(task)
+    return subs.count { it.done } to subs.size
+}
+
+/**
  * 子任务区：列出该任务已有的子任务 + 正在输入的草稿行 +「Add subtasks」按钮。
  * 每点一次按钮就追加一行草稿（各行独立输入、右侧 ✕ 可删除该行）。
  */
@@ -1862,6 +1921,8 @@ private fun BoxScope.MoveToListPanel(
 @Composable
 private fun DetailTaskRow(
     task: KanbanTask,
+    subtaskDone: Int,
+    subtaskTotal: Int,
     onToggle: (KanbanTask) -> Unit,
     onEdit: (KanbanTask) -> Unit
 ) {
@@ -1899,6 +1960,27 @@ private fun DetailTaskRow(
                 modifier = Modifier.padding(start = 36.dp, top = 2.dp)
             )
         }
+        // 子任务不展开，只显示「图标 + 已完成数/总数」
+        if (subtaskTotal > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 36.dp, top = 3.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.FormatListBulleted,
+                    contentDescription = null,
+                    tint = WuSubtle,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    text = "$subtaskDone/$subtaskTotal",
+                    fontSize = 12.sp,
+                    color = WuSubtle,
+                    lineHeight = 15.sp
+                )
+            }
+        }
     }
 }
 
@@ -1906,6 +1988,8 @@ private fun DetailTaskRow(
 @Composable
 private fun CompletedTaskRow(
     task: KanbanTask,
+    subtaskDone: Int,
+    subtaskTotal: Int,
     onToggle: (KanbanTask) -> Unit,
     onDelete: (KanbanTask) -> Unit,
     onEdit: (KanbanTask) -> Unit
@@ -1947,6 +2031,27 @@ private fun CompletedTaskRow(
                     .clip(CircleShape)
                     .clickable { onDelete(task) }
             )
+        }
+        // 子任务不展开，只显示「图标 + 已完成数/总数」
+        if (subtaskTotal > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 40.dp, top = 3.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.FormatListBulleted,
+                    contentDescription = null,
+                    tint = WuDoneGrey.copy(alpha = 0.75f),
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    text = "$subtaskDone/$subtaskTotal",
+                    fontSize = 12.sp,
+                    color = WuDoneGrey.copy(alpha = 0.75f),
+                    lineHeight = 15.sp
+                )
+            }
         }
         if (task.note.isNotBlank()) {
             Text(
@@ -2054,10 +2159,18 @@ private fun SectionCard(
             if (section.tasks.isNotEmpty()) {
                 Spacer(Modifier.height(14.dp))
                 // 未完成在前、完成在底部（稳定排序保持原有相对顺序）
-                section.tasks
+                // 子任务不展开：只列出顶层任务，子任务数以计数形式挂在任务下方
+                section.topLevelTasks()
                     .sortedBy { it.done }
                     .forEach { task ->
-                        TaskRow(task = task, onToggle = onToggle, onOpen = onOpen)
+                        val (subDone, subTotal) = section.subtaskProgress(task)
+                        TaskRow(
+                            task = task,
+                            subtaskDone = subDone,
+                            subtaskTotal = subTotal,
+                            onToggle = onToggle,
+                            onOpen = onOpen
+                        )
                     }
             }
         }
@@ -2068,40 +2181,67 @@ private fun SectionCard(
 @Composable
 private fun TaskRow(
     task: KanbanTask,
+    subtaskDone: Int,
+    subtaskTotal: Int,
     onToggle: (KanbanTask) -> Unit,
     onOpen: () -> Unit
 ) {
     Row(
-        verticalAlignment = Alignment.CenterVertically,
+        // 顶部对齐：任务文字可能换行，且下方还会跟一行子任务计数
+        verticalAlignment = Alignment.Top,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onOpen() }
             .padding(start = (task.indent * 10).dp, top = 3.dp, bottom = 3.dp)
     ) {
-        if (task.done) {
-            // 已完成：只显示勾（灰色），不带复选框圆圈（仍可点击切换回未完成）
-            Icon(
-                imageVector = Icons.Filled.Check,
-                contentDescription = null,
-                tint = WuDoneGrey,
-                modifier = Modifier
-                    .size(15.dp)
-                    .clickable { onToggle(task) }
-            )
-        } else {
-            CheckCircle(done = false, size = 14.dp, onClick = { onToggle(task) })
+        // 圆圈/对勾与第一行文字大致居中对齐（文字行高 18sp ≈ 22dp，圆圈 14dp）
+        Box(modifier = Modifier.padding(top = 4.dp)) {
+            if (task.done) {
+                // 已完成：只显示勾（灰色），不带复选框圆圈（仍可点击切换回未完成）
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = WuDoneGrey,
+                    modifier = Modifier
+                        .size(15.dp)
+                        .clickable { onToggle(task) }
+                )
+            } else {
+                CheckCircle(done = false, size = 14.dp, onClick = { onToggle(task) })
+            }
         }
         Spacer(Modifier.width(10.dp))
-        Text(
-            text = task.text,
-            fontSize = 13.sp,
-            color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
-            textDecoration = if (task.done) TextDecoration.LineThrough else null,
-            lineHeight = 18.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = task.text,
+                fontSize = 13.sp,
+                color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
+                textDecoration = if (task.done) TextDecoration.LineThrough else null,
+                lineHeight = 18.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            // 子任务不展开，只显示「图标 + 已完成数/总数」
+            if (subtaskTotal > 0) {
+                Spacer(Modifier.height(3.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Outlined.FormatListBulleted,
+                        contentDescription = null,
+                        tint = WuSubtle,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "$subtaskDone/$subtaskTotal",
+                        fontSize = 12.sp,
+                        color = WuSubtle,
+                        lineHeight = 14.sp
+                    )
+                }
+            }
+        }
     }
 }
 
