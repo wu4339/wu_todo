@@ -13,6 +13,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:enableOnBackInvokedCallback="true"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode|fontScale"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

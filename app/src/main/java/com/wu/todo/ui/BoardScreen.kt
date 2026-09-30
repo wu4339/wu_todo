@@ -1,6 +1,7 @@
 package com.wu.todo.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
@@ -273,7 +274,7 @@ fun BoardScreen(
             )
             // 顶栏与看板内容（Pinned 区）之间的分割线（上移 4dp、颜色更淡）
             HorizontalDivider(
-                color = Color(0xFFECECEC),
+                color = Color(0xFFE6E6E6),
                 thickness = 1.dp,
                 modifier = Modifier.offset(y = (-4).dp)
             )
@@ -568,7 +569,7 @@ private fun SectionDetailScreen(
             )
             // 顶栏与列表标题之间的分割线（上移 4dp、颜色更淡）
             HorizontalDivider(
-                color = Color(0xFFECECEC),
+                color = Color(0xFFE6E6E6),
                 thickness = 1.dp,
                 modifier = Modifier.offset(y = (-4).dp)
             )
@@ -836,7 +837,12 @@ private fun KeyboardSheet(
     DisposableEffect(Unit) {
         onDispose { keyboard?.hide() }
     }
-    BackHandler(onBack = close)
+    // 侧滑返回：手势一完成立即退出编辑并收起键盘（predictive back 协议，拖一半松手=取消不关闭）
+    PredictiveBackHandler { flow ->
+        flow.collect { }
+        keyboard?.hide()
+        onDismiss()
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
