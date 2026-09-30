@@ -105,7 +105,6 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -122,7 +121,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import com.wu.todo.R
 import com.wu.todo.data.KanbanSection
 import com.wu.todo.data.KanbanTask
@@ -820,7 +818,14 @@ private fun EditSectionSheet(
     val titleFocus = remember { FocusRequester() }
 
     KeyboardSheet(onDismiss = onDismiss, focus = titleFocus) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                // 大面板（参考截图）：占屏高约 68%，内容在顶部、保存按钮沉底，
+                // 调色板网格在窗口内部展开，窗口大小保持不变
+                .height(LocalConfiguration.current.screenHeightDp.dp * 0.68f)
+                .padding(horizontal = 20.dp)
+        ) {
             // 顶部拖动条装饰
             Box(
                 modifier = Modifier
@@ -865,65 +870,58 @@ private fun EditSectionSheet(
                     .focusRequester(titleFocus)
             )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            // 调色板行 + 下拉浮层网格：展开时网格向下浮出、盖在面板内容之上，
-            // 面板高度与顶部位置保持不变（zIndex 保证浮层画在后续内容之上）
-            Box(modifier = Modifier.zIndex(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(vertical = 12.dp)
+            // 调色板行：点击调色板图标或圆点展开/收起颜色网格
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 12.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Palette,
+                    contentDescription = "调色板",
+                    tint = WuSubtle,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .clickable { paletteOpen = !paletteOpen }
+                )
+                Spacer(Modifier.width(18.dp))
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                        .clickable { paletteOpen = !paletteOpen }
+                )
+            }
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            if (paletteOpen) {
+                // 颜色网格：在窗口内部向下展开（窗口大小不变），缩进与圆点对齐
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.padding(start = 40.dp, top = 14.dp, bottom = 6.dp)
                 ) {
-                    Icon(
-                        Icons.Outlined.Palette,
-                        contentDescription = "调色板",
-                        tint = WuSubtle,
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .clickable { paletteOpen = !paletteOpen }
-                    )
-                    Spacer(Modifier.width(18.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(dotColor)
-                            .clickable { paletteOpen = !paletteOpen }
-                    )
-                }
-                if (paletteOpen) {
-                    // 颜色网格浮层：每行 8 个，当前颜色带白色对勾，点选后收起
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                        modifier = Modifier
-                            .offset(y = 48.dp)
-                            .shadow(10.dp, RoundedCornerShape(14.dp))
-                            .background(WuCard, RoundedCornerShape(14.dp))
-                            .border(1.dp, WuDivider, RoundedCornerShape(14.dp))
-                            .padding(horizontal = 14.dp, vertical = 16.dp)
-                    ) {
-                        ListPalette.chunked(8).forEach { rowColors ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                rowColors.forEach { c ->
-                                    val selected = c == dotColor.toArgb().toLong()
-                                    Box(
-                                        modifier = Modifier
-                                            .size(26.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(c.toInt()))
-                                            .clickable {
-                                                onSetDotColor(c.toInt())
-                                                paletteOpen = false
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (selected) {
-                                            Icon(
-                                                Icons.Filled.Check,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                        }
+                    ListPalette.chunked(8).forEach { rowColors ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            rowColors.forEach { c ->
+                                val selected = c == dotColor.toArgb().toLong()
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(c.toInt()))
+                                        .clickable {
+                                            onSetDotColor(c.toInt())
+                                            paletteOpen = false
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (selected) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
                                     }
                                 }
                             }
@@ -931,6 +929,7 @@ private fun EditSectionSheet(
                     }
                 }
             }
+            Spacer(Modifier.weight(1f))
             // 右下角黄色对勾：保存标题修改
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
@@ -1546,9 +1545,7 @@ private fun SectionCard(
             .fillMaxWidth()
             .clickable { onOpen() },
         shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = WuCard),
-        // 柔和投影：卡片浮起有立体感
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        colors = CardDefaults.cardColors(containerColor = WuCard)
     ) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1777,9 +1774,10 @@ private fun AddListSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // 大面板（参考截图）：占屏高约 68%，内容在顶部、保存按钮沉底，
+                // 调色板网格在窗口内部展开，窗口大小保持不变
+                .height(LocalConfiguration.current.screenHeightDp.dp * 0.68f)
                 .padding(horizontal = 20.dp)
-                // 面板整体上移（累计 140dp），避免贴着键盘太近
-                .padding(bottom = 140.dp)
         ) {
             // 列表名称输入
             TextField(
@@ -1804,66 +1802,58 @@ private fun AddListSheet(
                     .focusRequester(titleFocus)
             )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            // 调色板行 + 下拉浮层网格：展开时网格向下浮出、盖在面板内容之上，
-            // 面板高度与顶部位置保持不变（zIndex 保证浮层画在后续内容之上）
-            Box(modifier = Modifier.zIndex(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(vertical = 12.dp)
+            // 调色板行：点击调色板图标或圆点展开/收起颜色网格
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(vertical = 12.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Palette,
+                    contentDescription = "切换颜色",
+                    tint = WuSubtle,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .clickable { paletteOpen = !paletteOpen }
+                )
+                Spacer(Modifier.width(18.dp))
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(Color(ListPalette[colorIdx].toInt()))
+                        .clickable { paletteOpen = !paletteOpen }
+                )
+            }
+            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            if (paletteOpen) {
+                // 颜色网格：在窗口内部向下展开（窗口大小不变），缩进与圆点对齐
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.padding(start = 40.dp, top = 14.dp, bottom = 6.dp)
                 ) {
-                    Icon(
-                        Icons.Outlined.Palette,
-                        contentDescription = "切换颜色",
-                        tint = WuSubtle,
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .clickable { paletteOpen = !paletteOpen }
-                    )
-                    Spacer(Modifier.width(18.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(Color(ListPalette[colorIdx].toInt()))
-                            .clickable { paletteOpen = !paletteOpen }
-                    )
-                    Spacer(Modifier.weight(1f))
-                }
-                if (paletteOpen) {
-                    // 颜色网格浮层：每行 8 个，当前颜色带白色对勾，点选后收起
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                        modifier = Modifier
-                            .offset(y = 48.dp)
-                            .shadow(10.dp, RoundedCornerShape(14.dp))
-                            .background(WuCard, RoundedCornerShape(14.dp))
-                            .border(1.dp, WuDivider, RoundedCornerShape(14.dp))
-                            .padding(horizontal = 14.dp, vertical = 16.dp)
-                    ) {
-                        ListPalette.chunked(8).forEachIndexed { rowIdx, rowColors ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                rowColors.forEachIndexed { colIdx, c ->
-                                    val absIdx = rowIdx * 8 + colIdx
-                                    Box(
-                                        modifier = Modifier
-                                            .size(26.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(c.toInt()))
-                                            .clickable {
-                                                colorIdx = absIdx
-                                                paletteOpen = false
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (absIdx == colorIdx) {
-                                            Icon(
-                                                Icons.Filled.Check,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(15.dp)
-                                            )
-                                        }
+                    ListPalette.chunked(8).forEachIndexed { rowIdx, rowColors ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            rowColors.forEachIndexed { colIdx, c ->
+                                val absIdx = rowIdx * 8 + colIdx
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(c.toInt()))
+                                        .clickable {
+                                            colorIdx = absIdx
+                                            paletteOpen = false
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (absIdx == colorIdx) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
                                     }
                                 }
                             }
@@ -1871,7 +1861,7 @@ private fun AddListSheet(
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.weight(1f))
             // 右下角黄色对勾：保存
             Row(
                 modifier = Modifier.fillMaxWidth(),
