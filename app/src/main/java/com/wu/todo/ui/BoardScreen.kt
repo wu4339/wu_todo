@@ -213,6 +213,7 @@ fun BoardScreen(
     Scaffold(
         containerColor = WuBackground,
         topBar = {
+            Column {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = WuBackground,
@@ -271,6 +272,7 @@ fun BoardScreen(
             )
             // 顶栏与看板内容（Pinned 区）之间的分割线
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
@@ -428,6 +430,7 @@ private fun SectionDetailScreen(
     Scaffold(
         containerColor = WuBackground,
         topBar = {
+            Column {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = WuBackground,
@@ -560,6 +563,7 @@ private fun SectionDetailScreen(
             )
             // 顶栏与列表标题之间的分割线
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
