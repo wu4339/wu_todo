@@ -713,13 +713,14 @@ private fun SectionDetailScreen(
             containerColor = WuCard,
             sheetState = addSheetState
         ) {
-            // 先等窗口完全展开到最高位置，再聚焦输入框并弹出软键盘
-            // （先窗口、后键盘，避免键盘在面板还在半路时就抢先弹出）
+            // 键盘与窗口同时弹出：内容一组合立即聚焦并拉起软键盘；
+            // 若焦点被展开动画吞掉则逐帧重试，直到键盘真正弹出
             LaunchedEffect(Unit) {
-                while (addSheetState.currentValue != SheetValue.Expanded) delay(16)
-                delay(160)
-                addFocus.requestFocus()
-                keyboard?.show()
+                repeat(40) {
+                    addFocus.requestFocus()
+                    keyboard?.show()
+                    delay(16)
+                }
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -802,6 +803,8 @@ private fun TaskEditSheet(
     var moveMenu by remember { mutableStateOf(false) }
     var showSubInput by remember { mutableStateOf(false) }
     var subText by remember { mutableStateOf("") }
+    val textFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
 
     // skipPartiallyExpanded=true：直接展开到内容最高位（0.72f 屏高），不再先停在半屏让用户上滑
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -814,8 +817,17 @@ private fun TaskEditSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.72f)
+                .imePadding()
                 .padding(horizontal = 20.dp)
         ) {
+            // 点开任务即编辑：窗口弹出的同时拉起软键盘（逐帧重试防止被动画吞掉）
+            LaunchedEffect(Unit) {
+                repeat(40) {
+                    textFocus.requestFocus()
+                    keyboard?.show()
+                    delay(16)
+                }
+            }
             // 顶部：右上角删除按钮
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 IconButton(onClick = { onDelete(task); onDismiss() }) {
@@ -845,7 +857,9 @@ private fun TaskEditSheet(
                     unfocusedIndicatorColor = Color.Transparent,
                     cursorColor = WuAccent
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(textFocus)
             )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
             // 移动到其他列
@@ -1327,13 +1341,14 @@ private fun AddListSheet(
         containerColor = WuCard,
         sheetState = sheetState
     ) {
-        // 先等窗口完全展开到最高位置，再聚焦名称输入框并弹出软键盘
-        // （先窗口、后键盘，避免键盘在面板还在半路时就抢先弹出）
+        // 键盘与窗口同时弹出：内容一组合立即聚焦并拉起软键盘；
+        // 若焦点被展开动画吞掉则逐帧重试，直到键盘真正弹出
         LaunchedEffect(Unit) {
-            while (sheetState.currentValue != SheetValue.Expanded) delay(16)
-            delay(160)
-            titleFocus.requestFocus()
-            keyboard?.show()
+            repeat(40) {
+                titleFocus.requestFocus()
+                keyboard?.show()
+                delay(16)
+            }
         }
         Column(
             modifier = Modifier
