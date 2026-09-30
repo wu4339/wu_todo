@@ -1,0 +1,19 @@
+name: Diag Ping
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hello
+        run: |
+          echo "runner ok"
+          echo "actor: ${{ github.actor }}"
+          echo "repo: ${{ github.repository }}"
+          echo "private token scope test:"
+          curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${{ github.repository }}
