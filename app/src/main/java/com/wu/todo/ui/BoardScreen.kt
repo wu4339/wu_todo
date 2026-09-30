@@ -1,7 +1,6 @@
 package com.wu.todo.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
@@ -149,7 +148,6 @@ import com.wu.todo.ui.theme.WuFab
 import com.wu.todo.ui.theme.WuSubtle
 import com.wu.todo.ui.theme.WuTaskText
 import com.wu.todo.ui.theme.WuTitle
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -1126,14 +1124,11 @@ private fun KeyboardSheet(
     // 优雅关闭流程：closing=true 后 → 停止拉键盘循环 + 收起键盘 + 面板下滑出屏 + 遮罩淡出，
     // 三者同步进行（约 320ms），动画结束后才真正卸载面板——彻底消除"瞬间消失"闪跳
     var closing by remember { mutableStateOf(false) }
-    // 侧滑返回手势进行中标记：键盘常因返回手势被输入法收起，若此时 ime 监听也触发 requestClose()
-    // 会与手势进度 snapTo 抢同一个 pAnim（一边滑下去一边被拽回手指），表现为抖动。用手势独占期挡掉它
-    var backActive by remember { mutableStateOf(false) }
-    var backEndMs by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
-    // pAnim：0=完全展开贴底，1=完全下滑出屏。进入/关闭/侧滑共用同一条动画源，
-    // 彻底杜绝"进入动画 / 关闭动画 / 系统默认返回动画"多源打架导致的抖动与跳变
+    // pAnim：0=完全展开贴底，1=完全下滑出屏。只由 requestClose / 进入动画驱动，
+    // 不再悬挂任何手势进度，保证"一次关闭 = 一条动画"，不会停在半路
     val pAnim = remember { Animatable(1f) }
+    // 唯一关闭入口：返回键 / 侧滑 / 点击遮罩 / 键盘收起，全部走这里，幂等（closing 守卫）
     val requestClose: () -> Unit = {
         if (!closing) {
             closing = true
@@ -1159,48 +1154,18 @@ private fun KeyboardSheet(
     var imeSeen by remember { mutableStateOf(false) }
     // 用 rememberUpdatedState 读取最新开关，避免 imeAutoClose 变化时重启该协程
     val autoClose by rememberUpdatedState(imeAutoClose)
-    // 侧滑返回（predictive back）：手势过程中把面板偏移直接绑定到手势进度，跟手且消除抖动
-    // （消费 progress 后系统不再叠加默认返回动画）；松手 commit → 从当前位置继续下滑关闭，
-    // 松手 cancel → 平滑回弹归位（拖一半松手=取消不关闭）
-    PredictiveBackHandler { flow ->
-        backActive = true
-        try {
-            flow.collect { event ->
-                val p = event.progress.coerceIn(0f, 1f)
-                pAnim.snapTo(p)
-            }
-            // 手势提交：从当前进度继续滑到底
-            requestClose()
-        } catch (e: CancellationException) {
-            // 手势取消：仅当键盘仍可见才是真正的中途取消 → 回弹归位；
-            // 若键盘已被输入法收起（返回被输入法吞掉），则不回弹，交给 finally 统一关闭
-            val imeNow = imeInsets.getBottom(density)
-            if (imeNow > 0) {
-                scope.launch { pAnim.animateTo(0f, tween(220)) }
-            }
-        } finally {
-            backActive = false
-            backEndMs = System.currentTimeMillis()
-            // 关键修复：若本次返回手势期间键盘被收起（输入法吞掉返回），
-            // 上面 ime 监听在手势中因 backActive 被跳过、且 snapshotFlow 只发一次，
-            // 会永久漏掉自动关闭 → 面板卡在半路收不掉。这里在手势结束后补一次关闭
-            val imeNow = imeInsets.getBottom(density)
-            if (imeSeen && !closing && autoClose && imeNow <= 0) {
-                requestClose()
-            }
-        }
-    }
-    // 一次侧滑即退出：键盘可见时，第一次侧滑返回会被输入法消费（只收键盘，app 收不到 back）。
-    // 监听键盘从可见变为隐藏——若是系统收起的（不是本组件主动 close），面板同步走优雅关闭，
-    // 与收起的键盘一起降下去，用户无需再滑第二次
+    // 返回键 / 侧滑返回：直接走统一关闭动画。
+    // 不再使用 PredictiveBackHandler 做"跟手预览"——那条路径用手势进度直接写 pAnim，
+    // 一旦手势被输入法吞掉、或结束后判定落空，面板就会卡在半路关不掉（故整个移除）
+    BackHandler { requestClose() }
+    // 键盘可见时，侧滑返回会先被输入法消费（app 收不到 back 回调），所以监听
+    // "键盘从可见变为隐藏"：键盘一收起就同步关闭面板，用户一次侧滑即可退出
     LaunchedEffect(Unit) {
         snapshotFlow { imeInsets.getBottom(density) > 0 }
             .collect { visible ->
                 if (visible) {
                     imeSeen = true
-                } else if (imeSeen && !closing && !backActive && autoClose
-                    && System.currentTimeMillis() - backEndMs > 350
-                ) {
+                } else if (imeSeen && autoClose) {
                     requestClose()
                 }
             }
