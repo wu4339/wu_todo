@@ -76,6 +76,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -84,11 +85,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -109,6 +114,7 @@ import com.wu.todo.ui.theme.WuFab
 import com.wu.todo.ui.theme.WuSubtle
 import com.wu.todo.ui.theme.WuTaskText
 import com.wu.todo.ui.theme.WuTitle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** 用「列头行号」作为一列的唯一 key，重命名标题后 key 不变，详情页不会跳回总览 */
@@ -347,7 +353,7 @@ fun BoardScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 private fun SectionDetailScreen(
     section: KanbanSection,
@@ -685,10 +691,17 @@ private fun SectionDetailScreen(
 
     // 底部弹出：新建任务输入条（输入 + 右侧加号提交）
     if (showAddSheet) {
+        val addFocus = remember { FocusRequester() }
+        val keyboard = LocalSoftwareKeyboardController.current
         ModalBottomSheet(
             onDismissRequest = { showAddSheet = false },
             containerColor = WuCard
         ) {
+            LaunchedEffect(Unit) {
+                delay(250)
+                addFocus.requestFocus()
+                keyboard?.show()
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -714,7 +727,9 @@ private fun SectionDetailScreen(
                         newTaskText = ""
                         showAddSheet = false
                     }),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(addFocus)
                 )
                 IconButton(
                     onClick = {
@@ -1123,10 +1138,10 @@ private fun TaskRow(
         Spacer(Modifier.width(12.dp))
         Text(
             text = task.text,
-            fontSize = 15.sp,
+            fontSize = 13.sp,
             color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTaskText,
             textDecoration = if (task.done) TextDecoration.LineThrough else null,
-            lineHeight = 20.sp,
+            lineHeight = 18.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -1281,14 +1296,16 @@ private fun AddListSheet(
     var title by remember { mutableStateOf("") }
     var colorIdx by remember { mutableStateOf(0) }
 
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = WuCard
+        containerColor = WuCard,
+        sheetState = sheetState
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.6f)
+                .fillMaxHeight(0.72f)
                 .padding(horizontal = 20.dp)
         ) {
             // 列表名称输入
