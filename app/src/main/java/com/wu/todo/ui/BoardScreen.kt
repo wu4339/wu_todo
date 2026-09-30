@@ -1130,6 +1130,10 @@ private fun KeyboardSheet(
     // 优雅关闭流程：closing=true 后 → 停止拉键盘循环 + 收起键盘 + 面板下滑出屏 + 遮罩淡出，
     // 三者同步进行（约 320ms），动画结束后才真正卸载面板——彻底消除"瞬间消失"闪跳
     var closing by remember { mutableStateOf(false) }
+    // 侧滑返回手势进行中标记：键盘常因返回手势被输入法收起，若此时 ime 监听也触发 requestClose()
+    // 会与手势进度 snapTo 抢同一个 pAnim（一边滑下去一边被拽回手指），表现为抖动。用手势独占期挡掉它
+    var backActive by remember { mutableStateOf(false) }
+    var backEndMs by remember { mutableStateOf(0L) }
     val scope = rememberCoroutineScope()
     // pAnim：0=完全展开贴底，1=完全下滑出屏。进入/关闭/侧滑共用同一条动画源，
     // 彻底杜绝"进入动画 / 关闭动画 / 系统默认返回动画"多源打架导致的抖动与跳变
@@ -1157,6 +1161,7 @@ private fun KeyboardSheet(
     // （消费 progress 后系统不再叠加默认返回动画）；松手 commit → 从当前位置继续下滑关闭，
     // 松手 cancel → 平滑回弹归位（拖一半松手=取消不关闭）
     PredictiveBackHandler { flow ->
+        backActive = true
         try {
             flow.collect { event ->
                 val p = event.progress.coerceIn(0f, 1f)
@@ -1167,6 +1172,9 @@ private fun KeyboardSheet(
         } catch (e: CancellationException) {
             // 手势取消：回弹归位
             scope.launch { pAnim.animateTo(0f, tween(220)) }
+        } finally {
+            backActive = false
+            backEndMs = System.currentTimeMillis()
         }
     }
     // 一次侧滑即退出：键盘可见时，第一次侧滑返回会被输入法消费（只收键盘，app 收不到 back）。
@@ -1182,7 +1190,9 @@ private fun KeyboardSheet(
             .collect { visible ->
                 if (visible) {
                     imeSeen = true
-                } else if (imeSeen && !closing && autoClose) {
+                } else if (imeSeen && !closing && !backActive && autoClose
+                    && System.currentTimeMillis() - backEndMs > 350
+                ) {
                     requestClose()
                 }
             }
