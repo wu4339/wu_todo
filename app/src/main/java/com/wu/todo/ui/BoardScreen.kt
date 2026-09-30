@@ -1168,18 +1168,30 @@ private fun KeyboardSheet(
                 }
             }
     }
-    // 遮罩淡出
+    // 进入动画：面板首次出现时从屏幕底部滑入（entered 由 false→true）
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+    val fullScreenH = LocalConfiguration.current.screenHeightDp.dp
+    // 遮罩淡入淡出（进入淡入，关闭淡出）
     val scrimAlpha by animateFloatAsState(
-        targetValue = if (closing) 0f else 0.32f,
+        targetValue = if (closing) 0f else if (entered) 0.32f else 0f,
         animationSpec = tween(280),
         label = "scrim"
     )
+    // 面板滑入：从底部滑入屏幕
+    val enterOffsetY by animateDpAsState(
+        targetValue = if (entered) 0.dp else fullScreenH,
+        animationSpec = tween(320),
+        label = "panelEnter"
+    )
     // 面板整体下滑出屏（与键盘收起同步，键盘和输入框一起降下去）
     val exitOffsetY by animateDpAsState(
-        targetValue = if (closing) LocalConfiguration.current.screenHeightDp.dp else 0.dp,
+        targetValue = if (closing) fullScreenH else 0.dp,
         animationSpec = tween(320),
         label = "panelExit"
     )
+    // 关闭优先走下滑动画，否则走进入的滑入动画
+    val panelOffsetY = if (closing) exitOffsetY else enterOffsetY
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1194,7 +1206,7 @@ private fun KeyboardSheet(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .imePadding()
-                .offset(y = exitOffsetY)
+                .offset(y = panelOffsetY)
                 .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -2005,14 +2017,19 @@ private fun AddListSheet(
     var colorIdx by remember { mutableStateOf(0) }
     var paletteOpen by remember { mutableStateOf(false) }
 
+    // 与任务编辑窗一致：顶部离屏幕顶约 60dp（高度随键盘动态）
+    val density = LocalDensity.current
+    val imeDp = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+    val screenH = LocalConfiguration.current.screenHeightDp.dp
+
     val titleFocus = remember { FocusRequester() }
     KeyboardSheet(onDismiss = onDismiss, focus = titleFocus) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // 大面板（参考截图）：占屏高约 68% 再减 30dp，内容在顶部、保存按钮沉底，
+                // 大面板：顶部离屏幕顶约 60dp（高度随键盘动态），内容在顶部、保存按钮沉底，
                 // 调色板网格在窗口内部展开，窗口大小保持不变
-                .height(LocalConfiguration.current.screenHeightDp.dp * 0.68f - 30.dp)
+                .height(screenH - imeDp - 60.dp)
                 .padding(horizontal = 20.dp)
         ) {
             // 列表名称输入
