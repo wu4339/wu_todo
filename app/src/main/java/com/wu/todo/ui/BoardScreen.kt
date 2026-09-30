@@ -6,9 +6,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -81,6 +83,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -706,27 +709,11 @@ private fun SectionDetailScreen(
     // 底部弹出：新建任务输入条（输入 + 右侧加号提交）
     if (showAddSheet) {
         val addFocus = remember { FocusRequester() }
-        val keyboard = LocalSoftwareKeyboardController.current
-        val addSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showAddSheet = false },
-            containerColor = WuCard,
-            sheetState = addSheetState
-        ) {
-            // 键盘与窗口同时弹出：内容一组合立即聚焦并拉起软键盘；
-            // 若焦点被展开动画吞掉则逐帧重试，直到键盘真正弹出
-            LaunchedEffect(Unit) {
-                repeat(40) {
-                    addFocus.requestFocus()
-                    keyboard?.show()
-                    delay(16)
-                }
-            }
+        KeyboardSheet(onDismiss = { showAddSheet = false }, focus = addFocus) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .imePadding()
                     .padding(horizontal = 20.dp)
             ) {
                 TextField(
@@ -786,6 +773,56 @@ private fun SectionDetailScreen(
     }
 }
 
+/** 键盘一体化底部面板：无滑入动画，出现即拉起键盘；imePadding 让面板骑在键盘上逐帧同步升起 */
+@Composable
+private fun KeyboardSheet(
+    focus: FocusRequester,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val close = {
+        keyboard?.hide()
+        onDismiss()
+    }
+    // 面板从组合移除时（Done/保存/遮罩/返回键）一律收起键盘
+    DisposableEffect(Unit) {
+        onDispose { keyboard?.hide() }
+    }
+    BackHandler(onBack = close)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.32f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { close() }
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .imePadding()
+                .background(WuCard, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { /* 吃掉面板内点击，不关闭 */ }
+        ) {
+            // 出现即聚焦并拉起键盘（与面板同时出现，逐帧重试保证成功）
+            LaunchedEffect(Unit) {
+                repeat(40) {
+                    focus.requestFocus()
+                    keyboard?.show()
+                    delay(16)
+                }
+            }
+            content()
+        }
+    }
+}
+
 /** 底部弹出的任务编辑页 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -804,30 +841,15 @@ private fun TaskEditSheet(
     var showSubInput by remember { mutableStateOf(false) }
     var subText by remember { mutableStateOf("") }
     val textFocus = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
 
-    // skipPartiallyExpanded=true：直接展开到内容最高位（0.72f 屏高），不再先停在半屏让用户上滑
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = WuCard,
-        sheetState = sheetState
-    ) {
+    // 键盘一体化面板：出现即拉起键盘，面板随键盘同步升起
+    KeyboardSheet(onDismiss = onDismiss, focus = textFocus) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.72f)
-                .imePadding()
                 .padding(horizontal = 20.dp)
         ) {
-            // 点开任务即编辑：窗口弹出的同时拉起软键盘（逐帧重试防止被动画吞掉）
-            LaunchedEffect(Unit) {
-                repeat(40) {
-                    textFocus.requestFocus()
-                    keyboard?.show()
-                    delay(16)
-                }
-            }
             // 顶部：右上角删除按钮
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 IconButton(onClick = { onDelete(task); onDismiss() }) {
@@ -1334,27 +1356,11 @@ private fun AddListSheet(
     var colorIdx by remember { mutableStateOf(0) }
 
     val titleFocus = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = WuCard,
-        sheetState = sheetState
-    ) {
-        // 键盘与窗口同时弹出：内容一组合立即聚焦并拉起软键盘；
-        // 若焦点被展开动画吞掉则逐帧重试，直到键盘真正弹出
-        LaunchedEffect(Unit) {
-            repeat(40) {
-                titleFocus.requestFocus()
-                keyboard?.show()
-                delay(16)
-            }
-        }
+    KeyboardSheet(onDismiss = onDismiss, focus = titleFocus) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.72f)
-                .imePadding()
                 .padding(horizontal = 20.dp)
         ) {
             // 列表名称输入
