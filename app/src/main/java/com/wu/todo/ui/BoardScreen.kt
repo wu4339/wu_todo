@@ -1157,6 +1157,12 @@ private fun KeyboardSheet(
         pAnim.snapTo(1f)
         pAnim.animateTo(0f, tween(320))
     }
+    // 键盘/密度：组合期取值（@Composable 属性不能在协程内读取），提前声明以便返回手势逻辑引用
+    val imeInsets = WindowInsets.ime
+    val density = LocalDensity.current
+    var imeSeen by remember { mutableStateOf(false) }
+    // 用 rememberUpdatedState 读取最新开关，避免 imeAutoClose 变化时重启该协程
+    val autoClose by rememberUpdatedState(imeAutoClose)
     // 侧滑返回（predictive back）：手势过程中把面板偏移直接绑定到手势进度，跟手且消除抖动
     // （消费 progress 后系统不再叠加默认返回动画）；松手 commit → 从当前位置继续下滑关闭，
     // 松手 cancel → 平滑回弹归位（拖一半松手=取消不关闭）
@@ -1170,21 +1176,27 @@ private fun KeyboardSheet(
             // 手势提交：从当前进度继续滑到底
             requestClose()
         } catch (e: CancellationException) {
-            // 手势取消：回弹归位
-            scope.launch { pAnim.animateTo(0f, tween(220)) }
+            // 手势取消：仅当键盘仍可见才是真正的中途取消 → 回弹归位；
+            // 若键盘已被输入法收起（返回被输入法吞掉），则不回弹，交给 finally 统一关闭
+            val imeNow = imeInsets.getBottom(density)
+            if (imeNow > 0) {
+                scope.launch { pAnim.animateTo(0f, tween(220)) }
+            }
         } finally {
             backActive = false
             backEndMs = System.currentTimeMillis()
+            // 关键修复：若本次返回手势期间键盘被收起（输入法吞掉返回），
+            // 上面 ime 监听在手势中因 backActive 被跳过、且 snapshotFlow 只发一次，
+            // 会永久漏掉自动关闭 → 面板卡在半路收不掉。这里在手势结束后补一次关闭
+            val imeNow = imeInsets.getBottom(density)
+            if (imeSeen && !closing && autoClose && imeNow <= 0) {
+                requestClose()
+            }
         }
     }
     // 一次侧滑即退出：键盘可见时，第一次侧滑返回会被输入法消费（只收键盘，app 收不到 back）。
     // 监听键盘从可见变为隐藏——若是系统收起的（不是本组件主动 close），面板同步走优雅关闭，
     // 与收起的键盘一起降下去，用户无需再滑第二次
-    val imeInsets = WindowInsets.ime  // 组合期取值（@Composable 属性不能在协程内读取）
-    val density = LocalDensity.current
-    var imeSeen by remember { mutableStateOf(false) }
-    // 用 rememberUpdatedState 读取最新开关，避免 imeAutoClose 变化时重启该协程
-    val autoClose by rememberUpdatedState(imeAutoClose)
     LaunchedEffect(Unit) {
         snapshotFlow { imeInsets.getBottom(density) > 0 }
             .collect { visible ->
@@ -1319,8 +1331,32 @@ private fun TaskEditSheet(
                 .height(screenH - imeDp - 60.dp)
                 .padding(horizontal = 20.dp)
         ) {
-            // 顶部：右上角删除按钮
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            // 标题 + 删除键 同一行：标题占满左侧（紧贴面板顶部，离屏顶 60dp），删除键沉到右端
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                TextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { Text("任务内容", color = WuSubtle, fontSize = 20.sp) },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = WuTitle
+                    ),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        cursorColor = WuAccent
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(textFocus)
+                )
                 IconButton(onClick = { onDelete(task); onDismiss() }) {
                     Icon(
                         Icons.Filled.Delete,
@@ -1330,28 +1366,6 @@ private fun TaskEditSheet(
                     )
                 }
             }
-            // 任务文本编辑（大号粗体）
-            TextField(
-                value = text,
-                onValueChange = { text = it },
-                placeholder = { Text("任务内容", color = WuSubtle, fontSize = 20.sp) },
-                singleLine = true,
-                textStyle = TextStyle(
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = WuTitle
-                ),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    cursorColor = WuAccent
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(textFocus)
-            )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
             // 移动到其他列
             Row(
