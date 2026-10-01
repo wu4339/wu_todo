@@ -189,6 +189,20 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 拖动排序：按新的任务行号顺序重排某一列并写回 .md */
+    /** 复制任务（文本/完成状态/note/子任务整块复制，紧跟原任务之后）并写回 .md */
+    fun duplicateTask(task: KanbanTask) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+
+        val newLines = KanbanParser.duplicateTask(cur.lines, task)
+        if (newLines == cur.lines) return
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
     fun reorderTasks(section: KanbanSection, orderedTaskLineIndexes: List<Int>) {
         val cur = state.value
         val uri = cur.fileUri ?: return

@@ -427,7 +427,17 @@ fun BoardScreen(
                             onAddCard = { section -> listAddKey = section.uniqueKey() },
                             onEditList = { section -> listEditKey = section.uniqueKey() },
                             onSetAllDone = { section, done -> viewModel.setAllTasks(section, done) },
-                            onDeleteCompleted = { section -> viewModel.deleteCompletedTasks(section) }
+                            onDeleteCompleted = { section -> viewModel.deleteCompletedTasks(section) },
+                            onDeleteTask = { _, task -> viewModel.delete(task) },
+                            onMoveTaskToTop = { section, task ->
+                                // 按原始行号给出新顺序：目标任务块在最前，其余保持原相对顺序
+                                //（reorderTasks 会把任务连同其 note/子任务行整块搬移）
+                                val tops = section.topLevelTasks()
+                                val order = listOf(task.lineIndex) +
+                                    tops.filter { it.lineIndex != task.lineIndex }.map { it.lineIndex }
+                                viewModel.reorderTasks(section, order)
+                            },
+                            onDuplicateTask = { _, task -> viewModel.duplicateTask(task) }
                         )
                     } else {
                         // 瀑布流（StaggeredGrid）：卡片按自身高度紧密堆叠，
@@ -2414,9 +2424,10 @@ private fun PinnedHeader() {
 
 // ===== 列表模式（参考图）：通栏的列区块、列头可折叠 =====
 
-/** 列表模式的配色：列区块比页面背景(WuBackground #F2F2F2)深一档，任务卡片白底细边框 */
+/** 列表模式的配色：列区块比页面背景(WuBackground #F2F2F2)深一档，任务卡片浅灰（不刺白） */
 private val ListSectionBg = Color(0xFFE7E7E7)
 private val ListCardBorder = Color(0xFFDBDBDB)
+private val ListTaskCardBg = Color(0xFFF5F5F5)
 
 /**
  * 列表模式总览：每列一个通栏区块，列头点击可折叠/展开。
@@ -2435,7 +2446,10 @@ private fun ListBoard(
     onAddCard: (KanbanSection) -> Unit,
     onEditList: (KanbanSection) -> Unit,
     onSetAllDone: (KanbanSection, Boolean) -> Unit,
-    onDeleteCompleted: (KanbanSection) -> Unit
+    onDeleteCompleted: (KanbanSection) -> Unit,
+    onDeleteTask: (KanbanSection, KanbanTask) -> Unit,
+    onMoveTaskToTop: (KanbanSection, KanbanTask) -> Unit,
+    onDuplicateTask: (KanbanSection, KanbanTask) -> Unit
 ) {
     // 单个列区块的渲染（pinned 与普通列共用）
     val block: @Composable (KanbanSection) -> Unit = { section ->
@@ -2450,7 +2464,10 @@ private fun ListBoard(
             onAddCard = { onAddCard(section) },
             onEditList = { onEditList(section) },
             onSetAllDone = { done -> onSetAllDone(section, done) },
-            onDeleteCompleted = { onDeleteCompleted(section) }
+            onDeleteCompleted = { onDeleteCompleted(section) },
+            onDeleteTask = { task -> onDeleteTask(section, task) },
+            onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) },
+            onDuplicateTask = { task -> onDuplicateTask(section, task) }
         )
     }
 
@@ -2493,7 +2510,10 @@ private fun ListSectionBlock(
     onAddCard: () -> Unit,
     onEditList: () -> Unit,
     onSetAllDone: (Boolean) -> Unit,
-    onDeleteCompleted: () -> Unit
+    onDeleteCompleted: () -> Unit,
+    onDeleteTask: (KanbanTask) -> Unit,
+    onMoveTaskToTop: (KanbanTask) -> Unit,
+    onDuplicateTask: (KanbanTask) -> Unit
 ) {
     // 只列顶层任务（与主界面一致：子任务不展开、不计数），未完成在前
     val tasks = section.topLevelTasks().sortedBy { it.done }
@@ -2596,7 +2616,10 @@ private fun ListSectionBlock(
                         ListTaskCard(
                             task = task,
                             onToggle = { onToggleTask(task) },
-                            onOpen = { onOpenTask(task) }
+                            onOpen = { onOpenTask(task) },
+                            onDelete = { onDeleteTask(task) },
+                            onMoveToTop = { onMoveTaskToTop(task) },
+                            onDuplicate = { onDuplicateTask(task) }
                         )
                     }
                 }
@@ -2616,19 +2639,23 @@ private fun ListSectionBlock(
     }
 }
 
-/** 列表模式里的任务卡片：白底圆角，左侧圆圈切换完成，点卡片/⋮ 打开任务编辑页 */
+/** 列表模式里的任务卡片：浅灰圆角，左侧圆圈切换完成，点卡片=编辑；⋮ 菜单：删除/移到顶部/编辑/复制 */
 @Composable
 private fun ListTaskCard(
     task: KanbanTask,
     onToggle: () -> Unit,
-    onOpen: () -> Unit
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+    onMoveToTop: () -> Unit,
+    onDuplicate: () -> Unit
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onOpen() },
         shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = WuCard),
+        colors = CardDefaults.cardColors(containerColor = ListTaskCardBg),
         border = BorderStroke(1.dp, ListCardBorder)
     ) {
         Row(
@@ -2659,16 +2686,39 @@ private fun ListTaskCard(
                 lineHeight = 20.sp,
                 modifier = Modifier.weight(1f)
             )
-            Icon(
-                imageVector = Icons.Filled.MoreVert,
-                contentDescription = "编辑任务",
-                tint = WuSubtle,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable { onOpen() }
-                    .padding(6.dp)
-                    .size(18.dp)
-            )
+            Box {
+                Icon(
+                    imageVector = Icons.Filled.MoreVert,
+                    contentDescription = "更多操作",
+                    tint = WuSubtle,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { menuExpanded = true }
+                        .padding(6.dp)
+                        .size(18.dp)
+                )
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("删除", color = Color(0xFFD9483B)) },
+                        onClick = { menuExpanded = false; onDelete() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("移到顶部") },
+                        onClick = { menuExpanded = false; onMoveToTop() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("编辑") },
+                        onClick = { menuExpanded = false; onOpen() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("复制") },
+                        onClick = { menuExpanded = false; onDuplicate() }
+                    )
+                }
+            }
         }
     }
 }
