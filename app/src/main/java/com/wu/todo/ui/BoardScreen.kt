@@ -430,12 +430,15 @@ fun BoardScreen(
                             onDeleteCompleted = { section -> viewModel.deleteCompletedTasks(section) },
                             onDeleteTask = { _, task -> viewModel.delete(task) },
                             onMoveTaskToTop = { section, task ->
-                                // 按原始行号给出新顺序：目标任务块在最前，其余保持原相对顺序
-                                //（reorderTasks 会把任务连同其 note/子任务行整块搬移）
+                                // 必须按"整块"（任务行 + 其下方子任务/备注行）给出完整行号顺序：
+                                // 目标任务块在最前，其余顶层任务块保持原相对顺序。
+                                // 若只传顶层行号，本列一旦含子任务，reorderTasks 会把每个子任务行
+                                // 也当成一个独立块，与"仅顶层行号"的入参数量不符 → blocks.size 校验失败 → 整列不动。
                                 val tops = section.topLevelTasks()
-                                val order = listOf(task.lineIndex) +
-                                    tops.filter { it.lineIndex != task.lineIndex }.map { it.lineIndex }
-                                viewModel.reorderTasks(section, order)
+                                val ordered = listOf(task) +
+                                    tops.filter { it.lineIndex != task.lineIndex }
+                                val newOrder = ordered.flatMap { section.blockLineIndexes(it) }
+                                viewModel.reorderTasks(section, newOrder)
                             },
                             onDuplicateTask = { _, task -> viewModel.duplicateTask(task) }
                         )
@@ -1447,7 +1450,7 @@ private fun TaskEditSheet(
     val subRows = remember(task.id) {
         val initial = mutableStateListOf<SubRow>()
         currentSection.subtasksOf(task).forEachIndexed { i, sub ->
-            initial.add(SubRow(-(i + 1).toLong(), sub, sub.text, committed = true))
+            initial.add(SubRow(-(i + 1).toLong(), sub, sub.text, committed = true, done = sub.done))
         }
         initial
     }
@@ -1468,9 +1471,9 @@ private fun TaskEditSheet(
         subRows.add(row)
         autoFocusDraftKey = row.key
     }
-    // 把当前子任务列表（含顺序）整体写回 board
+    // 把当前子任务列表（含顺序与勾选状态）整体写回 board
     val flushSubs: () -> Unit = {
-        onSetSubtasks(task, subRows.map { it.value.trim() to (it.existing?.done ?: false) })
+        onSetSubtasks(task, subRows.map { it.value.trim() to it.done })
     }
 
     // "Add items" 入口行（未展开时、以及备注行下方共用）
@@ -1821,11 +1824,15 @@ private class SubRow(
     val key: Long,
     val existing: KanbanTask?,
     value: String,
-    committed: Boolean = false
+    committed: Boolean = false,
+    done: Boolean = false
 ) {
     var value by mutableStateOf(value)
     // 是否已确认（回车提交后 / 来自 board 的已有子任务）：确认后不再显示输入框，改为只读文本
     var committed by mutableStateOf(committed)
+    // 子任务勾选状态：已有子任务取 board 中的值；新增草稿默认未完成。
+    // 改动只在面板内即时生效，点保存/关闭时才随 flushSubs 整块写回 .md。
+    var done by mutableStateOf(done)
 }
 
 /** 取某任务正下方紧邻的缩进子任务行（board 中 indent 大于父任务的任务即其子任务） */
@@ -1952,13 +1959,24 @@ private fun SubtaskSection(
                             .onGloballyPositioned { c ->
                                 rowHeights[row.key] = c.size.height.toFloat()
                             }
+                            // 拖动时整行"抬起"：白底 + 阴影 + 圆角，明确告诉用户正在拖哪一行
+                            .then(
+                                if (dragging) Modifier
+                                    .background(Color.White, RoundedCornerShape(6.dp))
+                                    .shadow(6.dp, RoundedCornerShape(6.dp))
+                                else Modifier
+                            )
                             .padding(vertical = 3.dp)
                     ) {
+                        // 子任务勾选框：点击切换"已完成/未完成"，改动随保存/关闭写回 .md
                         Icon(
-                            Icons.Outlined.RadioButtonUnchecked,
-                            contentDescription = null,
-                            tint = WuSubtle,
-                            modifier = Modifier.size(20.dp)
+                            imageVector = if (row.done) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                            contentDescription = if (row.done) "标记为未完成" else "标记为已完成",
+                            tint = if (row.done) WuAccent else WuSubtle,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .clickable { row.done = !row.done }
                         )
                         Spacer(Modifier.width(12.dp))
                         if (row.existing != null || row.committed) {
@@ -2031,14 +2049,12 @@ private fun SubtaskSection(
                                     .size(20.dp)
                             )
                         }
-                        // 拖动排序手柄：按住上下拖动调整子任务顺序
-                        Icon(
-                            Icons.Filled.DragHandle,
-                            contentDescription = "拖动排序",
-                            tint = WuSubtle,
+                        // 拖动排序手柄：按住上下拖动调整子任务顺序。
+                        // 用 36dp 的 Box 包住 22dp 图标，扩大可点区域，更容易抓住。
+                        Box(
                             modifier = Modifier
-                                .padding(start = 8.dp)
-                                .size(22.dp)
+                                .padding(start = 4.dp)
+                                .size(36.dp)
                                 .pointerInput(row.key) {
                                 detectDragGestures(
                                     onDragStart = {
@@ -2096,8 +2112,16 @@ private fun SubtaskSection(
                                         }
                                     }
                                 )
-                                }
-                        )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.DragHandle,
+                                contentDescription = "拖动排序",
+                                tint = WuSubtle,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }
