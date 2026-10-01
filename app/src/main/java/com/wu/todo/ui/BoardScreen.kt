@@ -1506,9 +1506,13 @@ private fun TaskEditSheet(
                     autoFocusKey = autoFocusDraftKey,
                     onAdd = addDraft,
                     onRemove = { row -> subRows.remove(row) },
-                    onMove = { from, to ->
-                        if (from != to && from in subRows.indices && to in subRows.indices) {
-                            subRows.add(to, subRows.removeAt(from))
+                    onReorder = { finalOrder ->
+                        // 松手后才按最终顺序一次性重排真实数据（拖拽过程中不碰真实列表，避免重组崩溃）
+                        val map = subRows.associateBy { it.key }
+                        val reordered = finalOrder.mapNotNull { map[it] }
+                        if (reordered.size == subRows.size) {
+                            subRows.clear()
+                            subRows.addAll(reordered)
                         }
                     }
                 )
@@ -1723,12 +1727,17 @@ private fun SubtaskSection(
     autoFocusKey: Long,
     onAdd: () -> Unit,
     onRemove: (SubRow) -> Unit,
-    onMove: (Int, Int) -> Unit
+    onReorder: (List<Long>) -> Unit
 ) {
-    // 各行高度（拖动时按"越过相邻行中线即交换"的模型计算）
-    val rowHeights = remember { mutableStateMapOf<Long, Float>() }
+    // 各行高度（拖动时按"越过相邻行中线即交换"的模型计算）。
+    // 普通 Map（非 Compose 状态）：onGloballyPositioned 回调里只写普通 Map，不再触发重组，
+    // 避免"写入→重组→重新布局→再次写入"的无限重组循环导致崩溃（子任务编辑面板一交互就闪退的根因）。
+    val rowHeights = remember { mutableMapOf<Long, Float>() }
     var dragKey by remember { mutableStateOf<Long?>(null) }
     var dragDy by remember { mutableFloatStateOf(0f) }
+    // 拖拽中的顺序快照（仅存 key 顺序的状态）；拖拽过程只改它，结束才一次性写回真实数据，
+    // 避免手势回调里实时改真实列表触发重组崩溃——与列内任务拖动用同一套成熟模式
+    var dragOrder by remember { mutableStateOf<List<Long>?>(null) }
 
     Row(
         verticalAlignment = Alignment.Top,
@@ -1748,7 +1757,11 @@ private fun SubtaskSection(
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            rows.forEach { row ->
+            // 拖拽时用快照顺序显示（其他行实时让位）；非拖拽时用原始顺序
+            val displayOrder = dragOrder ?: rows.map { it.key }
+            val rowByKey = rows.associateBy { it.key }
+            displayOrder.forEach { key ->
+                val row = rowByKey[key] ?: return@forEach
                 key(row.key) {
                     val dragging = dragKey == row.key
                     val fr = remember { FocusRequester() }
@@ -1826,47 +1839,62 @@ private fun SubtaskSection(
                                 .padding(start = 8.dp)
                                 .size(22.dp)
                                 .pointerInput(row.key) {
-                                    detectDragGestures(
-                                        onDragStart = {
-                                            dragKey = row.key
-                                            dragDy = 0f
-                                        },
-                                        onDragEnd = {
-                                            dragKey = null
-                                            dragDy = 0f
-                                        },
-                                        onDragCancel = {
-                                            dragKey = null
-                                            dragDy = 0f
-                                        },
-                                        onDrag = { change, amount ->
-                                            change.consume()
-                                            dragDy += amount.y
-                                            // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
-                                            var guard = 0
-                                            while (guard++ < 20) {
-                                                val i = rows.indexOfFirst { it.key == row.key }
-                                                if (i < 0) break
-                                                if (dragDy > 0f && i < rows.size - 1) {
-                                                    val nh = rowHeights[rows[i + 1].key] ?: 0f
-                                                    if (nh > 0f && dragDy > nh / 2f) {
-                                                        onMove(i, i + 1)
-                                                        dragDy -= nh
-                                                        continue
-                                                    }
+                                detectDragGestures(
+                                    onDragStart = {
+                                        // 快照当前顺序到可变列表，拖拽中只改它（不碰真实数据）
+                                        dragOrder = rows.map { it.key }.toMutableList()
+                                        dragDy = 0f
+                                        dragKey = row.key
+                                    },
+                                    onDragEnd = {
+                                        val finalOrder = dragOrder
+                                        dragKey = null
+                                        dragDy = 0f
+                                        dragOrder = null
+                                        // 松手才把最终顺序一次性写回真实列表（不在手势回调里实时改，避免重组崩溃）
+                                        if (finalOrder != null) onReorder(finalOrder)
+                                    },
+                                    onDragCancel = {
+                                        dragKey = null
+                                        dragDy = 0f
+                                        dragOrder = null
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragDy += amount.y
+                                        val order =
+                                            (dragOrder as? MutableList<Long>) ?: return@detectDragGestures
+                                        // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
+                                        var guard = 0
+                                        while (guard++ < 30) {
+                                            val i = order.indexOf(row.key)
+                                            if (i < 0) break
+                                            if (dragDy > 0f && i < order.size - 1) {
+                                                val nh = rowHeights[order[i + 1]] ?: 0f
+                                                if (nh > 0f && dragDy > nh / 2f) {
+                                                    val tmp = order[i]
+                                                    order[i] = order[i + 1]
+                                                    order[i + 1] = tmp
+                                                    dragOrder = order
+                                                    dragDy -= nh
+                                                    continue
                                                 }
-                                                if (dragDy < 0f && i > 0) {
-                                                    val ph = rowHeights[rows[i - 1].key] ?: 0f
-                                                    if (ph > 0f && -dragDy > ph / 2f) {
-                                                        onMove(i, i - 1)
-                                                        dragDy += ph
-                                                        continue
-                                                    }
-                                                }
-                                                break
                                             }
+                                            if (dragDy < 0f && i > 0) {
+                                                val ph = rowHeights[order[i - 1]] ?: 0f
+                                                if (ph > 0f && -dragDy > ph / 2f) {
+                                                    val tmp = order[i]
+                                                    order[i] = order[i - 1]
+                                                    order[i - 1] = tmp
+                                                    dragOrder = order
+                                                    dragDy += ph
+                                                    continue
+                                                }
+                                            }
+                                            break
                                         }
-                                    )
+                                    }
+                                )
                                 }
                         )
                     }
