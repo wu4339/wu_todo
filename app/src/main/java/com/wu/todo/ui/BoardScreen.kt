@@ -325,6 +325,19 @@ fun BoardScreen(
                             text = { Text(if (listMode) "切换到网格总览" else "切换到列表模式") },
                             onClick = { menuExpanded = false; listMode = !listMode }
                         )
+                        // 列表模式：一键折叠/展开所有列表（全部已折叠时变为"展开"）
+                        if (listMode && state.sections.isNotEmpty()) {
+                            val allCollapsed = state.sections.all { it.title in collapsedTitles }
+                            DropdownMenuItem(
+                                text = { Text(if (allCollapsed) "展开所有列表" else "折叠所有列表") },
+                                onClick = {
+                                    menuExpanded = false
+                                    collapsedTitles =
+                                        if (allCollapsed) emptyList()
+                                        else state.sections.map { it.title }
+                                }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("打开 .md 文件") },
                             onClick = { menuExpanded = false; onOpenFile() }
@@ -2401,9 +2414,9 @@ private fun PinnedHeader() {
 
 // ===== 列表模式（参考图）：通栏的列区块、列头可折叠 =====
 
-/** 列表模式的配色：列区块浅灰、任务卡片白底细边框 */
-private val ListSectionBg = Color(0xFFF5F5F5)
-private val ListCardBorder = Color(0xFFE9E9E9)
+/** 列表模式的配色：列区块比页面背景(WuBackground #F2F2F2)深一档，任务卡片白底细边框 */
+private val ListSectionBg = Color(0xFFE7E7E7)
+private val ListCardBorder = Color(0xFFDBDBDB)
 
 /**
  * 列表模式总览：每列一个通栏区块，列头点击可折叠/展开。
