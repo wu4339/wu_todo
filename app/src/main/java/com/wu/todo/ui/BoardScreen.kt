@@ -1174,6 +1174,8 @@ private fun KeyboardSheet(
     autoFocus: Boolean = true,
     /** 大面板顶部距离屏幕上沿的间距（越小面板越高、越靠上） */
     topGap: Dp = 60.dp,
+    /** 键盘弹起时，内容区底部再留出的安全余量（防止被输入法键盘上方那行工具栏/按键压住） */
+    imeExtraBottom: Dp = 0.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1275,6 +1277,9 @@ private fun KeyboardSheet(
                 modifier = Modifier
                     .then(if (compact) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
                     .imePadding()
+                    // 键盘弹起时再留一段安全距离：部分输入法键盘上方还有一行工具栏，
+                    // ime insets 未必全部覆盖，留出余量避免最后一行内容被它压住
+                    .padding(bottom = if (imeInsets.getBottom(density) > 0) imeExtraBottom else 0.dp)
                     .padding(contentPadding)
             ) {
                 content()
@@ -1444,9 +1449,11 @@ private fun TaskEditSheet(
         focus = textFocus,
         imeAutoClose = !moveSheetOpen,
         contentPadding = PaddingValues(0.dp),
-        // 打开编辑面板不弹键盘（点输入框才弹）；面板整体再上移 20dp（顶部间距 60 → 40）
+        // 打开编辑面板不弹键盘（点输入框才弹）；面板整体再上移 10dp（顶部间距 40 → 30）
         autoFocus = false,
-        topGap = 40.dp,
+        topGap = 30.dp,
+        // 键盘弹起时内容底部再留 16dp，避免最后一行被输入法键盘上方那行按键压住
+        imeExtraBottom = 16.dp,
         overlay = {
             if (moveSheetOpen) {
                 MoveToListPanel(
@@ -1559,102 +1566,103 @@ private fun TaskEditSheet(
                 }
             }
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            // 中部内容可滚动：子任务行可能较多
-            Column(
+            // 中部：可滚动内容 + 悬浮保存按钮。
+            // 保存按钮改成真正悬浮在内容之上（不再独占一行高度），内容区多出约 68dp
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .verticalScroll(rememberScrollState())
             ) {
-            // 备注行：md 中写在任务行下方（`- 内容`），位置在子任务之前，与看板文件结构一致
-            if (noteText.isNotBlank() || addItemState == 2) {
-                noteRow()
-                HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            }
-            // 子任务区：已有子任务 + 新增草稿行（统一列表，可拖动排序）+「Add subtasks」按钮
-            if (subRows.isNotEmpty() || addItemState == 3) {
-                SubtaskSection(
-                    rows = subRows,
-                    autoFocusKey = autoFocusDraftKey,
-                    onAdd = addDraft,
-                    onRemove = { row -> subRows.remove(row) },
-                    onReorder = { finalOrder ->
-                        // 松手后才按最终顺序一次性重排真实数据（拖拽过程中不碰真实列表，避免重组崩溃）
-                        val map = subRows.associateBy { it.key }
-                        val reordered = finalOrder.mapNotNull { map[it] }
-                        if (reordered.size == subRows.size) {
-                            subRows.clear()
-                            subRows.addAll(reordered)
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                // 备注行：md 中写在任务行下方（`- 内容`），位置在子任务之前，与看板文件结构一致
+                if (noteText.isNotBlank() || addItemState == 2) {
+                    noteRow()
+                    HorizontalDivider(color = WuDivider, thickness = 1.dp)
+                }
+                // 子任务区：已有子任务 + 新增草稿行（统一列表，可拖动排序）+「Add subtasks」按钮
+                if (subRows.isNotEmpty() || addItemState == 3) {
+                    SubtaskSection(
+                        rows = subRows,
+                        autoFocusKey = autoFocusDraftKey,
+                        onAdd = addDraft,
+                        onRemove = { row -> subRows.remove(row) },
+                        onReorder = { finalOrder ->
+                            // 松手后才按最终顺序一次性重排真实数据（拖拽过程中不碰真实列表，避免重组崩溃）
+                            val map = subRows.associateBy { it.key }
+                            val reordered = finalOrder.mapNotNull { map[it] }
+                            if (reordered.size == subRows.size) {
+                                subRows.clear()
+                                subRows.addAll(reordered)
+                            }
+                        }
+                    )
+                    HorizontalDivider(color = WuDivider, thickness = 1.dp)
+                }
+                // Add items：先弹出选项菜单（Note / Subtask），再进入对应输入行
+                when (addItemState) {
+                    0 -> {
+                        addItemsEntry()
+                    }
+                    1 -> {
+                        // 选项菜单：Note（备注）与 Subtask（子任务）
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(WuBackground)
+                                    .clickable {
+                                        noteText = task.note
+                                        addItemState = 2
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Notes,
+                                    contentDescription = null,
+                                    tint = WuSubtle,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                Text("Note", fontSize = 15.sp, color = WuTitle)
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(WuBackground)
+                                    .clickable { addItemState = 3; addDraft() }
+                                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.SubdirectoryArrowRight,
+                                    contentDescription = null,
+                                    tint = WuSubtle,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                Text("Subtask", fontSize = 15.sp, color = WuTitle)
+                            }
                         }
                     }
-                )
-                HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            }
-            // Add items：先弹出选项菜单（Note / Subtask），再进入对应输入行
-            when (addItemState) {
-                0 -> {
-                    addItemsEntry()
-                }
-                1 -> {
-                    // 选项菜单：Note（备注）与 Subtask（子任务）
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(WuBackground)
-                                .clickable {
-                                    noteText = task.note
-                                    addItemState = 2
-                                }
-                                .padding(horizontal = 14.dp, vertical = 12.dp)
-                        ) {
-                            Icon(
-                                Icons.Outlined.Notes,
-                                contentDescription = null,
-                                tint = WuSubtle,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(Modifier.width(14.dp))
-                            Text("Note", fontSize = 15.sp, color = WuTitle)
-                        }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(WuBackground)
-                                .clickable { addItemState = 3; addDraft() }
-                                .padding(horizontal = 14.dp, vertical = 12.dp)
-                        ) {
-                            Icon(
-                                Icons.Outlined.SubdirectoryArrowRight,
-                                contentDescription = null,
-                                tint = WuSubtle,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(Modifier.width(14.dp))
-                            Text("Subtask", fontSize = 15.sp, color = WuTitle)
-                        }
+                    else -> {
+                        // 0 = 收起；2 = 备注编辑中；3 = 子任务编辑中（备注/子任务都已在上面渲染各自区块）
+                        addItemsEntry()
                     }
                 }
-                else -> {
-                    // 0 = 收起；2 = 备注编辑中；3 = 子任务编辑中（备注/子任务都已在上面渲染各自区块）
-                    addItemsEntry()
+                    // 悬浮保存按钮的让位空间：内容滚到底时，最后一项不会被按钮盖住
+                    Spacer(Modifier.height(76.dp))
                 }
-            }
-            }
-            // 右下角黄色对勾：保存文本修改（沉底）
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
+                // 右下角黄色对勾：真正悬浮在内容之上（不占布局高度）
                 FloatingActionButton(
                     onClick = {
                         onRenameTask(task, text.toSingleLineTaskText())
@@ -1664,12 +1672,14 @@ private fun TaskEditSheet(
                         onDismiss()
                     },
                     containerColor = WuFab,
-                    contentColor = WuTitle
+                    contentColor = WuTitle,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 20.dp, bottom = 12.dp)
                 ) {
                     Icon(Icons.Filled.Check, contentDescription = "保存")
                 }
             }
-            Spacer(Modifier.height(12.dp))
         }
     }
 }
