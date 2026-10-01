@@ -2581,16 +2581,16 @@ private fun ListSectionBlock(
                         onDismissRequest = { menuExpanded = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("添加卡片") },
-                            onClick = { menuExpanded = false; onAddCard() }
-                        )
-                        DropdownMenuItem(
                             text = { Text("编辑列表") },
                             onClick = { menuExpanded = false; onEditList() }
                         )
                         DropdownMenuItem(
                             text = { Text("打开列详情") },
                             onClick = { menuExpanded = false; onOpenSection() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("添加卡片") },
+                            onClick = { menuExpanded = false; onAddCard() }
                         )
                         HorizontalDivider(color = WuDivider, thickness = 1.dp)
                         DropdownMenuItem(
@@ -2613,8 +2613,11 @@ private fun ListSectionBlock(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     tasks.forEach { task ->
+                        val (subDone, subTotal) = section.subtaskProgress(task)
                         ListTaskCard(
                             task = task,
+                            subtaskDone = subDone,
+                            subtaskTotal = subTotal,
                             onToggle = { onToggleTask(task) },
                             onOpen = { onOpenTask(task) },
                             onDelete = { onDeleteTask(task) },
@@ -2639,10 +2642,12 @@ private fun ListSectionBlock(
     }
 }
 
-/** 列表模式里的任务卡片：浅灰圆角，左侧圆圈切换完成，点卡片=编辑；⋮ 菜单：删除/移到顶部/编辑/复制 */
+/** 列表模式里的任务卡片：浅灰圆角，左侧圆圈切换完成，点卡片=编辑；⋮ 菜单：删除/移到顶部/编辑/复制；有子任务时底部显示计数 */
 @Composable
 private fun ListTaskCard(
     task: KanbanTask,
+    subtaskDone: Int,
+    subtaskTotal: Int,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
@@ -2658,12 +2663,19 @@ private fun ListTaskCard(
         colors = CardDefaults.cardColors(containerColor = ListTaskCardBg),
         border = BorderStroke(1.dp, ListCardBorder)
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, end = 2.dp, top = 11.dp, bottom = 11.dp)
-        ) {
+        Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = 12.dp,
+                        end = 2.dp,
+                        top = 11.dp,
+                        // 有子任务计数行时收紧底部间距，让计数贴着任务文字
+                        bottom = if (subtaskTotal > 0) 2.dp else 11.dp
+                    )
+            ) {
             if (task.done) {
                 // 已完成：灰色勾，仍可点回未完成
                 Icon(
@@ -2716,6 +2728,31 @@ private fun ListTaskCard(
                     DropdownMenuItem(
                         text = { Text("复制") },
                         onClick = { menuExpanded = false; onDuplicate() }
+                    )
+                }
+            }
+        }
+            // 子任务计数：有子任务时在卡片底部显示「图标 + 已完成/总数」
+            if (subtaskTotal > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 40.dp, end = 14.dp)
+                        .padding(bottom = 10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.FormatListBulleted,
+                        contentDescription = null,
+                        tint = WuSubtle,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "$subtaskDone/$subtaskTotal",
+                        fontSize = 12.sp,
+                        color = WuSubtle,
+                        lineHeight = 14.sp
                     )
                 }
             }
