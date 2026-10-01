@@ -42,6 +42,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -125,8 +126,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -1256,7 +1263,7 @@ private fun KeyboardSheet(
                 LaunchedEffect(Unit) {
                     repeat(40) {
                         if (closing) return@LaunchedEffect
-                        focus.requestFocus()
+                        runCatching { focus.requestFocus() }
                         keyboard?.show()
                         delay(16)
                     }
@@ -1306,12 +1313,15 @@ private fun TaskEditSheet(
     val subRows = remember(task.id) {
         val initial = mutableStateListOf<SubRow>()
         currentSection.subtasksOf(task).forEachIndexed { i, sub ->
-            initial.add(SubRow(-(i + 1).toLong(), sub, sub.text))
+            initial.add(SubRow(-(i + 1).toLong(), sub, sub.text, committed = true))
         }
         initial
     }
+    // 草稿行 key 用正数（1,2,3…），已有子任务用负数（-1,-2…），两类 key 永不冲突。
+    // autoFocusDraftKey 的初值必须是"不可能与任何行相等"的值：用 0（key 里没有 0），
+    // 否则会误判成"需要自动聚焦某行"，对没有输入框的只读行调用未绑定的 FocusRequester → 崩溃。
     var subKeySeq by remember(task.id) { mutableStateOf(0L) }
-    var autoFocusDraftKey by remember(task.id) { mutableStateOf(-1L) }
+    var autoFocusDraftKey by remember(task.id) { mutableStateOf(0L) }
     var noteText by remember(task.id) { mutableStateOf(task.note) }
     val textFocus = remember { FocusRequester() }
     val noteFocus = remember { FocusRequester() }
@@ -1358,14 +1368,14 @@ private fun TaskEditSheet(
             movePanelOpened = true
             repeat(24) { keyboard?.hide(); delay(16) }
         } else if (movePanelOpened) {
-            repeat(6) { textFocus.requestFocus(); keyboard?.show(); delay(16) }
+            repeat(6) { runCatching { textFocus.requestFocus() }; keyboard?.show(); delay(16) }
         }
     }
 
     // 选 Note 后：光标自动聚焦到备注输入框（持续抢焦点，覆盖面板初始拉焦循环）
     LaunchedEffect(addItemState) {
         when (addItemState) {
-            2 -> repeat(45) { noteFocus.requestFocus(); delay(16) }
+            2 -> repeat(45) { runCatching { noteFocus.requestFocus() }; delay(16) }
         }
     }
 
@@ -1661,8 +1671,15 @@ private fun TaskEditSheet(
  * 任务编辑面板里的一行子任务。
  * [existing] != null 表示来自 board 的已有子任务（只读文本）；为 null 表示本次新增的草稿行（可编辑、可删除）。
  */
-private class SubRow(val key: Long, val existing: KanbanTask?, value: String) {
+private class SubRow(
+    val key: Long,
+    val existing: KanbanTask?,
+    value: String,
+    committed: Boolean = false
+) {
     var value by mutableStateOf(value)
+    // 是否已确认（回车提交后 / 来自 board 的已有子任务）：确认后不再显示输入框，改为只读文本
+    var committed by mutableStateOf(committed)
 }
 
 /** 取某任务正下方紧邻的缩进子任务行（board 中 indent 大于父任务的任务即其子任务） */
@@ -1744,7 +1761,7 @@ private fun SubtaskSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
-            .padding(top = 10.dp)
+            .padding(top = 6.dp)
     ) {
         // 左侧列表图标：与第一行子任务对齐
         Icon(
@@ -1752,7 +1769,7 @@ private fun SubtaskSection(
             contentDescription = null,
             tint = WuSubtle,
             modifier = Modifier
-                .padding(top = 10.dp)
+                .padding(top = 4.dp)
                 .size(20.dp)
         )
         Spacer(Modifier.width(14.dp))
@@ -1760,13 +1777,25 @@ private fun SubtaskSection(
             // 拖拽时用快照顺序显示（其他行实时让位）；非拖拽时用原始顺序
             val displayOrder = dragOrder ?: rows.map { it.key }
             val rowByKey = rows.associateBy { it.key }
+            // 回车 / 键盘"完成"：确认当前子任务并立刻追加下一行，保持连续录入
+            val submitAndNext: (SubRow) -> Unit = { r ->
+                if (r.existing == null && !r.committed && r.value.trim().isNotEmpty()) {
+                    r.value = r.value.trim()
+                    r.committed = true
+                    onAdd()
+                }
+            }
             displayOrder.forEach { key ->
                 val row = rowByKey[key] ?: return@forEach
                 key(row.key) {
                     val dragging = dragKey == row.key
                     val fr = remember { FocusRequester() }
-                    LaunchedEffect(autoFocusKey, row.key) {
-                        if (autoFocusKey == row.key) fr.requestFocus()
+                    // 只有正在输入的草稿行才绑定了 fr；对只读行（已有子任务/已确认行）调用
+                    // requestFocus() 会抛 IllegalStateException → 面板一闪即崩
+                    LaunchedEffect(autoFocusKey, row.key, row.committed) {
+                        if (autoFocusKey == row.key && row.existing == null && !row.committed) {
+                            runCatching { fr.requestFocus() }
+                        }
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1777,7 +1806,7 @@ private fun SubtaskSection(
                             .onGloballyPositioned { c ->
                                 rowHeights[row.key] = c.size.height.toFloat()
                             }
-                            .padding(vertical = 8.dp)
+                            .padding(vertical = 3.dp)
                     ) {
                         Icon(
                             Icons.Outlined.RadioButtonUnchecked,
@@ -1786,8 +1815,8 @@ private fun SubtaskSection(
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(Modifier.width(12.dp))
-                        if (row.existing != null) {
-                            // 已有子任务：只读文本
+                        if (row.existing != null || row.committed) {
+                            // 已有子任务 / 已回车确认的子任务：只读文本
                             Text(
                                 text = row.value,
                                 fontSize = 15.sp,
@@ -1796,39 +1825,65 @@ private fun SubtaskSection(
                                 modifier = Modifier.weight(1f)
                             )
                         } else {
-                            // 新增草稿行：多行输入 + 右侧 ✕ 删除该行
-                            TextField(
+                            // 新增草稿行：多行输入 + 回车即确认并续行 + 右侧 ✕ 删除该行。
+                            // 用 BasicTextField 而非 TextField：后者的最小高度固定 56dp，会让行间距过大。
+                            BasicTextField(
                                 value = row.value,
                                 onValueChange = { row.value = it },
-                                placeholder = { Text("Subtask", color = WuSubtle, fontSize = 15.sp) },
-                                // 多行：自动换行、随内容增高（最多 5 行，超出后框内滚动）
-                                singleLine = false,
-                                minLines = 1,
-                                maxLines = 5,
                                 textStyle = TextStyle(
                                     fontSize = 15.sp,
                                     color = WuTitle,
                                     lineHeight = 22.sp
                                 ),
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent,
-                                    cursorColor = WuAccent
-                                ),
+                                // 多行：自动换行、随内容增高（最多 5 行，超出后框内滚动）
+                                singleLine = false,
+                                maxLines = 5,
+                                cursorBrush = SolidColor(WuAccent),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { submitAndNext(row) }),
                                 modifier = Modifier
                                     .weight(1f)
                                     .focusRequester(fr)
+                                    .onPreviewKeyEvent { e ->
+                                        // 回车：确认当前子任务并继续下一条（软/硬键盘的换行键都吃掉，不插入换行）
+                                        if (e.type == KeyEventType.KeyDown &&
+                                            (e.key == Key.Enter || e.key == Key.NumPadEnter)
+                                        ) {
+                                            submitAndNext(row)
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    },
+                                decorationBox = { inner ->
+                                    Box {
+                                        if (row.value.isEmpty()) {
+                                            Text(
+                                                "Subtask",
+                                                color = WuSubtle,
+                                                fontSize = 15.sp,
+                                                lineHeight = 22.sp
+                                            )
+                                        }
+                                        inner()
+                                    }
+                                }
                             )
-                            IconButton(onClick = { onRemove(row) }) {
-                                Icon(
-                                    Icons.Outlined.Close,
-                                    contentDescription = "删除该子任务行",
-                                    tint = WuSubtle,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                        }
+                        // 删除该行（本次新增的草稿/已确认行可删；来自 board 的已有子任务不提供删除）。
+                        // 用 28dp 的小点击区而非 IconButton（后者固定 48dp，会把行距撑大）
+                        if (row.existing == null) {
+                            Icon(
+                                Icons.Outlined.Close,
+                                contentDescription = "删除该子任务行",
+                                tint = WuSubtle,
+                                modifier = Modifier
+                                    .padding(start = 6.dp)
+                                    .clip(CircleShape)
+                                    .clickable { onRemove(row) }
+                                    .padding(3.dp)
+                                    .size(20.dp)
+                            )
                         }
                         // 拖动排序手柄：按住上下拖动调整子任务顺序
                         Icon(
@@ -1904,7 +1959,7 @@ private fun SubtaskSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.dp, bottom = 12.dp)
+                    .padding(top = 2.dp, bottom = 10.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
