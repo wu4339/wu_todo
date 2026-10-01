@@ -67,6 +67,8 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Cancel
+import androidx.compose.material.icons.outlined.CheckBox
+import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
@@ -124,6 +126,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
@@ -1959,18 +1962,14 @@ private fun SubtaskSection(
                             .onGloballyPositioned { c ->
                                 rowHeights[row.key] = c.size.height.toFloat()
                             }
-                            // 拖动时整行"抬起"：白底 + 阴影 + 圆角，明确告诉用户正在拖哪一行
-                            .then(
-                                if (dragging) Modifier
-                                    .background(Color.White, RoundedCornerShape(6.dp))
-                                    .shadow(6.dp, RoundedCornerShape(6.dp))
-                                else Modifier
-                            )
+                            // 拖动时：不要卡片框/阴影，仅整体轻微半透明，保持"跟手"的轻量手感
+                            .alpha(if (dragging) 0.92f else 1f)
                             .padding(vertical = 3.dp)
                     ) {
                         // 子任务勾选框：点击切换"已完成/未完成"，改动随保存/关闭写回 .md
+                        // 用方块复选框（CheckBox），完成时文本加删除线并变灰，给出明确的"已完成"效果
                         Icon(
-                            imageVector = if (row.done) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                            imageVector = if (row.done) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
                             contentDescription = if (row.done) "标记为未完成" else "标记为已完成",
                             tint = if (row.done) WuAccent else WuSubtle,
                             modifier = Modifier
@@ -1984,7 +1983,8 @@ private fun SubtaskSection(
                             Text(
                                 text = row.value,
                                 fontSize = 15.sp,
-                                color = WuTitle,
+                                color = if (row.done) WuSubtle else WuTitle,
+                                textDecoration = if (row.done) TextDecoration.LineThrough else null,
                                 lineHeight = 22.sp,
                                 modifier = Modifier.weight(1f)
                             )
@@ -1996,8 +1996,9 @@ private fun SubtaskSection(
                                 onValueChange = { row.value = it },
                                 textStyle = TextStyle(
                                     fontSize = 15.sp,
-                                    color = WuTitle,
-                                    lineHeight = 22.sp
+                                    color = if (row.done) WuSubtle else WuTitle,
+                                    lineHeight = 22.sp,
+                                    textDecoration = if (row.done) TextDecoration.LineThrough else null
                                 ),
                                 // 多行：自动换行、随内容增高（最多 5 行，超出后框内滚动）
                                 singleLine = false,
@@ -2092,7 +2093,9 @@ private fun SubtaskSection(
                                                     val tmp = order[i]
                                                     order[i] = order[i + 1]
                                                     order[i + 1] = tmp
-                                                    dragOrder = order
+                                                    // 重新赋值一份新列表：MutableState 的等值比较会跳过"同引用原地修改"，
+                                                    // 导致不触发重组、其他行不会让位 → 拖动不跟手。换成新列表才能实时重排。
+                                                    dragOrder = ArrayList(order)
                                                     dragDy -= nh
                                                     continue
                                                 }
@@ -2103,7 +2106,7 @@ private fun SubtaskSection(
                                                     val tmp = order[i]
                                                     order[i] = order[i - 1]
                                                     order[i - 1] = tmp
-                                                    dragOrder = order
+                                                    dragOrder = ArrayList(order)
                                                     dragDy += ph
                                                     continue
                                                 }
