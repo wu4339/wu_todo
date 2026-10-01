@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
@@ -56,7 +57,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -116,6 +119,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -191,6 +195,17 @@ fun BoardScreen(
     val scope = rememberCoroutineScope()
     // 新建任务列表的底部编辑页
     var showListSheet by remember { mutableStateOf(false) }
+
+    // ===== 列表模式（参考图）：通栏的列区块，列头可折叠 =====
+    // 默认用列表模式；顶栏可切回"瀑布流网格"总览
+    var listMode by rememberSaveable { mutableStateOf(true) }
+    // 已折叠的列（按列名记，列名改了会重新展开，可接受）
+    var collapsedTitles by rememberSaveable { mutableStateOf(listOf<String>()) }
+    // 列表模式下打开的列（列头 ⋮ 菜单里的入口：添加卡片 / 编辑列表）
+    var listAddKey by remember { mutableStateOf<String?>(null) }
+    var listEditKey by remember { mutableStateOf<String?>(null) }
+    // 列表模式下打开的任务编辑页：列 key + 任务行号（用行号而非对象，避免数据刷新后引用过期）
+    var listTaskRef by remember { mutableStateOf<Pair<String, Int>?>(null) }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -289,6 +304,13 @@ fun BoardScreen(
                     }
                 },
                 actions = {
+                    // 列表模式 / 网格总览 互切
+                    IconButton(onClick = { listMode = !listMode }) {
+                        Icon(
+                            imageVector = if (listMode) Icons.Filled.GridView else Icons.Filled.List,
+                            contentDescription = if (listMode) "切换到网格总览" else "切换到列表模式"
+                        )
+                    }
                     IconButton(onClick = { viewModel.reload() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "刷新")
                     }
@@ -299,6 +321,10 @@ fun BoardScreen(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false }
                     ) {
+                        DropdownMenuItem(
+                            text = { Text(if (listMode) "切换到网格总览" else "切换到列表模式") },
+                            onClick = { menuExpanded = false; listMode = !listMode }
+                        )
                         DropdownMenuItem(
                             text = { Text("打开 .md 文件") },
                             onClick = { menuExpanded = false; onOpenFile() }
@@ -363,30 +389,71 @@ fun BoardScreen(
             else -> {
                 val pinnedSections = state.sections.filter { it.title in state.pinnedTitles }
                 val normalSections = state.sections.filter { it.title !in state.pinnedTitles }
-                // 瀑布流（StaggeredGrid）：卡片按自身高度紧密堆叠，
-                // 不再像普通 Grid 那样按行对齐而在矮卡片下方留出空白
+                // 两种视图：列表模式（通栏的列区块、列头可折叠）/ 瀑布流网格总览
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
                 ) {
-                    LazyVerticalStaggeredGrid(
-                        columns = StaggeredGridCells.Fixed(2),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalItemSpacing = 8.dp,
-                        contentPadding = PaddingValues(
-                            start = 12.dp,
-                            end = 12.dp,
-                            top = 12.dp,
-                            bottom = 96.dp
-                        ),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        if (pinnedSections.isNotEmpty()) {
-                            item(key = "pinned_header", span = StaggeredGridItemSpan.FullLine) {
-                                PinnedHeader()
+                    if (listMode) {
+                        ListBoard(
+                            pinnedSections = pinnedSections,
+                            normalSections = normalSections,
+                            sectionColors = state.sectionColors,
+                            collapsedTitles = collapsedTitles,
+                            onToggleCollapse = { title ->
+                                collapsedTitles =
+                                    if (title in collapsedTitles) collapsedTitles - title
+                                    else collapsedTitles + title
+                            },
+                            onToggleTask = viewModel::toggle,
+                            onOpenTask = { section, task ->
+                                listTaskRef = section.uniqueKey() to task.lineIndex
+                            },
+                            onOpenSection = { section -> openedSectionKey = section.uniqueKey() },
+                            onAddCard = { section -> listAddKey = section.uniqueKey() },
+                            onEditList = { section -> listEditKey = section.uniqueKey() },
+                            onSetAllDone = { section, done -> viewModel.setAllTasks(section, done) },
+                            onDeleteCompleted = { section -> viewModel.deleteCompletedTasks(section) }
+                        )
+                    } else {
+                        // 瀑布流（StaggeredGrid）：卡片按自身高度紧密堆叠，
+                        // 不再像普通 Grid 那样按行对齐而在矮卡片下方留出空白
+                        LazyVerticalStaggeredGrid(
+                            columns = StaggeredGridCells.Fixed(2),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalItemSpacing = 8.dp,
+                            contentPadding = PaddingValues(
+                                start = 12.dp,
+                                end = 12.dp,
+                                top = 12.dp,
+                                bottom = 96.dp
+                            ),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            if (pinnedSections.isNotEmpty()) {
+                                item(key = "pinned_header", span = StaggeredGridItemSpan.FullLine) {
+                                    PinnedHeader()
+                                }
+                                items(pinnedSections, key = { "p_${it.uniqueKey()}" }) { section ->
+                                    SectionCard(
+                                        section = section,
+                                        dotColor = Color(state.sectionColors[section.title] ?: WuAccent.toArgb()),
+                                        onToggle = viewModel::toggle,
+                                        onOpen = { openedSectionKey = section.uniqueKey() }
+                                    )
+                                }
+                                if (normalSections.isNotEmpty()) {
+                                    item(key = "pinned_divider", span = StaggeredGridItemSpan.FullLine) {
+                                        HorizontalDivider(
+                                            color = WuDivider,
+                                            thickness = 1.dp,
+                                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                                        )
+                                    }
+                                }
                             }
-                            items(pinnedSections, key = { "p_${it.uniqueKey()}" }) { section ->
+                            items(normalSections, key = { it.uniqueKey() }) { section ->
                                 SectionCard(
                                     section = section,
                                     dotColor = Color(state.sectionColors[section.title] ?: WuAccent.toArgb()),
@@ -394,29 +461,68 @@ fun BoardScreen(
                                     onOpen = { openedSectionKey = section.uniqueKey() }
                                 )
                             }
-                            if (normalSections.isNotEmpty()) {
-                                item(key = "pinned_divider", span = StaggeredGridItemSpan.FullLine) {
-                                    HorizontalDivider(
-                                        color = WuDivider,
-                                        thickness = 1.dp,
-                                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                                    )
-                                }
-                            }
-                        }
-                        items(normalSections, key = { it.uniqueKey() }) { section ->
-                            SectionCard(
-                                section = section,
-                                dotColor = Color(state.sectionColors[section.title] ?: WuAccent.toArgb()),
-                                onToggle = viewModel::toggle,
-                                onOpen = { openedSectionKey = section.uniqueKey() }
-                            )
                         }
                     }
                 }
             }
         }
     }
+    }
+
+    // ===== 列表模式下的弹层 =====
+
+    // 添加卡片（底部紧凑输入页，贴键盘）
+    listAddKey?.let { key ->
+        val sec = state.sections.firstOrNull { it.uniqueKey() == key }
+        if (sec != null) {
+            AddCardSheet(
+                onDismiss = { listAddKey = null },
+                onAdd = { text -> viewModel.addTask(sec, text) }
+            )
+        }
+    }
+
+    // 编辑列表（改名 / 换色 / 删除）
+    listEditKey?.let { key ->
+        val sec = state.sections.firstOrNull { it.uniqueKey() == key }
+        if (sec != null) {
+            EditSectionSheet(
+                section = sec,
+                dotColor = Color(state.sectionColors[sec.title] ?: WuAccent.toArgb()),
+                onDismiss = { listEditKey = null },
+                onRename = { newTitle -> viewModel.renameSection(sec, newTitle) },
+                onDelete = {
+                    viewModel.deleteSection(sec)
+                    listEditKey = null
+                },
+                onSetDotColor = { argb -> viewModel.setSectionColor(sec, argb) }
+            )
+        }
+    }
+
+    // 任务编辑页（点列表模式里的任务卡片）
+    listTaskRef?.let { ref ->
+        val sec = state.sections.firstOrNull { it.uniqueKey() == ref.first }
+        val t = sec?.tasks?.firstOrNull { it.lineIndex == ref.second }
+        if (sec != null && t != null) {
+            TaskEditSheet(
+                task = t,
+                sections = state.sections,
+                currentSection = sec,
+                sectionColors = state.sectionColors,
+                dotColor = Color(state.sectionColors[sec.title] ?: WuAccent.toArgb()),
+                onDismiss = { listTaskRef = null },
+                onRenameTask = viewModel::renameTask,
+                onMoveTask = { task, target -> viewModel.moveTask(task, target, sec) },
+                onSetSubtasks = viewModel::replaceSubtasks,
+                onSetNote = viewModel::setNote,
+                onDelete = { task ->
+                    viewModel.delete(task)
+                    listTaskRef = null
+                },
+                onSetDotColor = { argb -> viewModel.setSectionColor(sec, argb) }
+            )
+        }
     }
 
     // 底部弹出：新建任务列表
@@ -2290,6 +2396,324 @@ private fun PinnedHeader() {
             color = WuSubtle,
             letterSpacing = 1.5.sp
         )
+    }
+}
+
+// ===== 列表模式（参考图）：通栏的列区块、列头可折叠 =====
+
+/** 列表模式的配色：列区块浅灰、任务卡片白底细边框 */
+private val ListSectionBg = Color(0xFFF5F5F5)
+private val ListCardBorder = Color(0xFFE9E9E9)
+
+/**
+ * 列表模式总览：每列一个通栏区块，列头点击可折叠/展开。
+ * 折叠状态按列名记忆（rememberSaveable：旋转屏幕后仍在；不写回 .md）。
+ */
+@Composable
+private fun ListBoard(
+    pinnedSections: List<KanbanSection>,
+    normalSections: List<KanbanSection>,
+    sectionColors: Map<String, Int>,
+    collapsedTitles: List<String>,
+    onToggleCollapse: (String) -> Unit,
+    onToggleTask: (KanbanTask) -> Unit,
+    onOpenTask: (KanbanSection, KanbanTask) -> Unit,
+    onOpenSection: (KanbanSection) -> Unit,
+    onAddCard: (KanbanSection) -> Unit,
+    onEditList: (KanbanSection) -> Unit,
+    onSetAllDone: (KanbanSection, Boolean) -> Unit,
+    onDeleteCompleted: (KanbanSection) -> Unit
+) {
+    // 单个列区块的渲染（pinned 与普通列共用）
+    val block: @Composable (KanbanSection) -> Unit = { section ->
+        ListSectionBlock(
+            section = section,
+            dotColor = Color(sectionColors[section.title] ?: WuAccent.toArgb()),
+            collapsed = section.title in collapsedTitles,
+            onToggleCollapse = { onToggleCollapse(section.title) },
+            onToggleTask = onToggleTask,
+            onOpenTask = { task -> onOpenTask(section, task) },
+            onOpenSection = { onOpenSection(section) },
+            onAddCard = { onAddCard(section) },
+            onEditList = { onEditList(section) },
+            onSetAllDone = { done -> onSetAllDone(section, done) },
+            onDeleteCompleted = { onDeleteCompleted(section) }
+        )
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (pinnedSections.isNotEmpty()) {
+            item(key = "list_pinned_header") { PinnedHeader() }
+            items(count = pinnedSections.size, key = { i -> "lp_${pinnedSections[i].uniqueKey()}" }) { i ->
+                block(pinnedSections[i])
+            }
+            if (normalSections.isNotEmpty()) {
+                item(key = "list_pinned_divider") {
+                    HorizontalDivider(
+                        color = WuDivider,
+                        thickness = 1.dp,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
+                    )
+                }
+            }
+        }
+        items(count = normalSections.size, key = { i -> normalSections[i].uniqueKey() }) { i ->
+            block(normalSections[i])
+        }
+    }
+}
+
+/** 列表模式里的一个列区块：列头（箭头 + 圆点 + 列名 + 任务数 + ⋮）+ 任务卡片 +「+添加卡片」 */
+@Composable
+private fun ListSectionBlock(
+    section: KanbanSection,
+    dotColor: Color,
+    collapsed: Boolean,
+    onToggleCollapse: () -> Unit,
+    onToggleTask: (KanbanTask) -> Unit,
+    onOpenTask: (KanbanTask) -> Unit,
+    onOpenSection: () -> Unit,
+    onAddCard: () -> Unit,
+    onEditList: () -> Unit,
+    onSetAllDone: (Boolean) -> Unit,
+    onDeleteCompleted: () -> Unit
+) {
+    // 只列顶层任务（与主界面一致：子任务不展开、不计数），未完成在前
+    val tasks = section.topLevelTasks().sortedBy { it.done }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = ListSectionBg),
+        border = BorderStroke(1.dp, ListCardBorder)
+    ) {
+        Column(Modifier.padding(bottom = 4.dp)) {
+            // 列头：点击空白区域折叠/展开（⋮ 自己消费点击，不触发折叠）
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleCollapse() }
+                    .padding(start = 10.dp, end = 6.dp, top = 10.dp, bottom = 10.dp)
+            ) {
+                Icon(
+                    imageVector = if (collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (collapsed) "展开列表" else "折叠列表",
+                    tint = WuSubtle,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(dotColor)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = section.title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = WuTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(10.dp))
+                // 任务数（折叠时也显示，参考图里的 9 / 2 / 3）
+                Text(
+                    text = "${tasks.size}",
+                    fontSize = 14.sp,
+                    color = WuSubtle
+                )
+                Spacer(Modifier.width(2.dp))
+                Box {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "列表操作",
+                        tint = WuSubtle,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { menuExpanded = true }
+                            .padding(7.dp)
+                            .size(18.dp)
+                    )
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("添加卡片") },
+                            onClick = { menuExpanded = false; onAddCard() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("编辑列表") },
+                            onClick = { menuExpanded = false; onEditList() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("打开列详情") },
+                            onClick = { menuExpanded = false; onOpenSection() }
+                        )
+                        HorizontalDivider(color = WuDivider, thickness = 1.dp)
+                        DropdownMenuItem(
+                            text = { Text("全部标记完成") },
+                            onClick = { menuExpanded = false; onSetAllDone(true) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("清除已完成") },
+                            onClick = { menuExpanded = false; onDeleteCompleted() }
+                        )
+                    }
+                }
+            }
+            // 展开：任务卡片竖排 +「+添加卡片」
+            if (!collapsed) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    tasks.forEach { task ->
+                        ListTaskCard(
+                            task = task,
+                            onToggle = { onToggleTask(task) },
+                            onOpen = { onOpenTask(task) }
+                        )
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onAddCard() }
+                        .padding(vertical = 14.dp)
+                ) {
+                    Text("+添加卡片", fontSize = 14.sp, color = WuSubtle)
+                }
+            }
+        }
+    }
+}
+
+/** 列表模式里的任务卡片：白底圆角，左侧圆圈切换完成，点卡片/⋮ 打开任务编辑页 */
+@Composable
+private fun ListTaskCard(
+    task: KanbanTask,
+    onToggle: () -> Unit,
+    onOpen: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpen() },
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = WuCard),
+        border = BorderStroke(1.dp, ListCardBorder)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 2.dp, top = 11.dp, bottom = 11.dp)
+        ) {
+            if (task.done) {
+                // 已完成：灰色勾，仍可点回未完成
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = "标记未完成",
+                    tint = WuDoneGrey,
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clickable { onToggle() }
+                )
+            } else {
+                CheckCircle(done = false, size = 16.dp, onClick = onToggle)
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = task.text,
+                fontSize = 14.sp,
+                color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTitle,
+                textDecoration = if (task.done) TextDecoration.LineThrough else null,
+                lineHeight = 20.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                imageVector = Icons.Filled.MoreVert,
+                contentDescription = "编辑任务",
+                tint = WuSubtle,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { onOpen() }
+                    .padding(6.dp)
+                    .size(18.dp)
+            )
+        }
+    }
+}
+
+/** 底部紧凑输入页：给某一列添加一张卡片（贴键盘，回车或 + 确认） */
+@Composable
+private fun AddCardSheet(
+    onDismiss: () -> Unit,
+    onAdd: (String) -> Unit
+) {
+    var text by remember { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    KeyboardSheet(onDismiss = onDismiss, focus = focus, compact = true) {
+        Spacer(Modifier.height(8.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            TextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = { Text("new task", color = WuSubtle, fontSize = 16.sp) },
+                singleLine = false,
+                minLines = 1,
+                maxLines = 4,
+                textStyle = TextStyle(fontSize = 16.sp, color = WuTitle),
+                shape = RoundedCornerShape(12.dp),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.White,
+                    unfocusedContainerColor = Color.White,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = WuAccent
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    val t = text.toSingleLineTaskText()
+                    if (t.isNotBlank()) onAdd(t)
+                    onDismiss()
+                }),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focus)
+            )
+            IconButton(onClick = {
+                val t = text.toSingleLineTaskText()
+                if (t.isNotBlank()) onAdd(t)
+                onDismiss()
+            }) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = "确认添加",
+                    tint = WuTitle,
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
     }
 }
 
