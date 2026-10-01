@@ -1361,6 +1361,63 @@ private fun TaskEditSheet(
         }
     }
 
+    // 备注（note）行：写入 md 时是缩进的无序列表项（`- 内容`），排在子任务之前。
+    // 有内容时（或正在编辑时）常驻显示，避免"保存后看不见、以为没加上"。
+    val noteRow: @Composable () -> Unit = {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(vertical = 6.dp)
+        ) {
+            Icon(
+                Icons.Outlined.Notes,
+                contentDescription = null,
+                tint = WuSubtle,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(14.dp))
+            BasicTextField(
+                value = noteText,
+                onValueChange = { noteText = it },
+                textStyle = TextStyle(fontSize = 15.sp, color = WuTitle, lineHeight = 22.sp),
+                // 多行：备注可换行，最多 5 行后框内滚动
+                singleLine = false,
+                maxLines = 5,
+                cursorBrush = SolidColor(WuAccent),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(noteFocus),
+                decorationBox = { inner ->
+                    Box {
+                        if (noteText.isEmpty()) {
+                            Text("Note", color = WuSubtle, fontSize = 15.sp, lineHeight = 22.sp)
+                        }
+                        inner()
+                    }
+                }
+            )
+            Spacer(Modifier.width(8.dp))
+            // ✕：保存备注并收起输入态（内容清空后保存即删除该备注）
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = "保存备注并收起",
+                tint = WuSubtle,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable {
+                        onSetNote(task, noteText)
+                        addItemState = 0
+                    }
+                    .padding(3.dp)
+                    .size(20.dp)
+            )
+        }
+    }
+    // 面板关闭 / 点保存时把备注落盘（内容没变时 ViewModel 会跳过写入）
+    val flushNote: () -> Unit = { onSetNote(task, noteText) }
+
     // 打开选择面板时收起键盘（面板落到底部）；从面板回来后恢复输入焦点（首次打开面板不弹键盘）
     var movePanelOpened by remember(task.id) { mutableStateOf(false) }
     LaunchedEffect(moveSheetOpen) {
@@ -1383,7 +1440,7 @@ private fun TaskEditSheet(
     // contentPadding = 0：分割线需要通栏（左边缘到右边缘），水平内边距由各行自己控制
     KeyboardSheet(
         // 关闭面板前先把子任务列表落盘，避免输入内容丢失
-        onDismiss = { flushSubs(); onDismiss() },
+        onDismiss = { flushNote(); flushSubs(); onDismiss() },
         focus = textFocus,
         imeAutoClose = !moveSheetOpen,
         contentPadding = PaddingValues(0.dp),
@@ -1509,6 +1566,11 @@ private fun TaskEditSheet(
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
             ) {
+            // 备注行：md 中写在任务行下方（`- 内容`），位置在子任务之前，与看板文件结构一致
+            if (noteText.isNotBlank() || addItemState == 2) {
+                noteRow()
+                HorizontalDivider(color = WuDivider, thickness = 1.dp)
+            }
             // 子任务区：已有子任务 + 新增草稿行（统一列表，可拖动排序）+「Add subtasks」按钮
             if (subRows.isNotEmpty() || addItemState == 3) {
                 SubtaskSection(
@@ -1580,64 +1642,8 @@ private fun TaskEditSheet(
                         }
                     }
                 }
-                2 -> {
-                    // 备注（note）行：左侧笔记图标 + 多行输入框 + 右侧 ✕（保存并收起），
-                    // 行下方保留 Add items 入口（与参考图一致）
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp)
-                    ) {
-                        Icon(
-                            Icons.Outlined.Notes,
-                            contentDescription = null,
-                            tint = WuSubtle,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(14.dp))
-                        TextField(
-                            value = noteText,
-                            onValueChange = { noteText = it },
-                            placeholder = { Text("Note", color = WuSubtle, fontSize = 15.sp) },
-                            // 多行：自动换行，最多 5 行，超出后框内滚动
-                            singleLine = false,
-                            minLines = 1,
-                            maxLines = 5,
-                            textStyle = TextStyle(
-                                fontSize = 15.sp,
-                                color = WuTitle,
-                                lineHeight = 22.sp
-                            ),
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                cursorColor = WuAccent
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .focusRequester(noteFocus)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        IconButton(onClick = {
-                            onSetNote(task, noteText)
-                            addItemState = 0
-                        }) {
-                            Icon(
-                                Icons.Outlined.Close,
-                                contentDescription = "保存备注并收起",
-                                tint = WuSubtle,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                    HorizontalDivider(color = WuDivider, thickness = 1.dp)
-                    addItemsEntry()
-                }
                 else -> {
-                    // 0 = 收起；3 = 子任务编辑中（子任务区已在上方渲染）
+                    // 0 = 收起；2 = 备注编辑中；3 = 子任务编辑中（备注/子任务都已在上面渲染各自区块）
                     addItemsEntry()
                 }
             }
@@ -1652,7 +1658,8 @@ private fun TaskEditSheet(
                 FloatingActionButton(
                     onClick = {
                         onRenameTask(task, text.toSingleLineTaskText())
-                        // 保存前先把子任务列表落盘
+                        // 保存前先把备注与子任务列表落盘
+                        flushNote()
                         flushSubs()
                         onDismiss()
                     },
