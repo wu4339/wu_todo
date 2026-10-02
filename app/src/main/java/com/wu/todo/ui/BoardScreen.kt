@@ -1517,74 +1517,11 @@ private fun TaskEditSheet(
         }
     }
 
-    // 多条备注：每条独立一行（图标 + 可编辑文本 + 删除 ✕），支持增删。
-    // 写回 md 时每条是独立的缩进无序列表项（`- 内容`），排在子任务之前，与文件结构一致。
-    val noteRows: @Composable () -> Unit = {
-        noteItems.forEach { item ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .padding(vertical = 6.dp)
-            ) {
-                Icon(
-                    Icons.Outlined.Notes,
-                    contentDescription = null,
-                    tint = WuSubtle,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(14.dp))
-                BasicTextField(
-                    value = item.value,
-                    onValueChange = { item.value = it },
-                    textStyle = TextStyle(fontSize = 15.sp, color = WuTitle, lineHeight = 22.sp),
-                    // 多行：备注可换行，最多 5 行后框内滚动
-                    singleLine = false,
-                    maxLines = 5,
-                    cursorBrush = SolidColor(WuAccent),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        // 回车：完成本条 note（内容非空时）并新增一条进入编辑
-                        if (item.value.trim().isNotEmpty()) addNote()
-                    }),
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(item.fr)
-                        .onPreviewKeyEvent { e ->
-                            // 回车：完成本条 note 并进入下一条编辑（内容为空则不新增，避免连出空 note）
-                            if (e.type == KeyEventType.KeyDown &&
-                                (e.key == Key.Enter || e.key == Key.NumPadEnter)
-                            ) {
-                                if (item.value.trim().isNotEmpty()) addNote()
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                    decorationBox = { inner ->
-                        Box {
-                            if (item.value.isEmpty()) {
-                                Text("Note", color = WuSubtle, fontSize = 15.sp, lineHeight = 22.sp)
-                            }
-                            inner()
-                        }
-                    }
-                )
-                Spacer(Modifier.width(8.dp))
-                // ✕：删除该条备注（内容清空后保存即移除）
-                Icon(
-                    Icons.Outlined.Close,
-                    contentDescription = "删除该备注",
-                    tint = WuSubtle,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { removeNote(item) }
-                        .padding(3.dp)
-                        .size(20.dp)
-                )
-            }
-        }
+    // 备注重排：按拖拽得到的 key 顺序重排 noteItems（flushNotes 写回时即按此顺序落盘）。
+    val reorderNotes: (List<Long>) -> Unit = { order ->
+        val map = noteItems.associateBy { it.key }
+        noteItems.clear()
+        noteItems.addAll(order.mapNotNull { map[it] })
     }
 
     // 打开选择面板时收起键盘（面板落到底部）；从面板回来后恢复输入焦点（首次打开面板不弹键盘）
@@ -1747,7 +1684,12 @@ private fun TaskEditSheet(
                 ) {
                 // 备注区：md 中写在任务行下方（`- 内容`），位置在子任务之前，与看板文件结构一致
                 if (noteItems.isNotEmpty()) {
-                    noteRows()
+                    NoteSection(
+                        items = noteItems,
+                        onAdd = addNote,
+                        onRemove = removeNote,
+                        onReorder = reorderNotes
+                    )
                     HorizontalDivider(color = WuDivider, thickness = 1.dp)
                 }
                 // 子任务区：已有子任务 + 新增草稿行（统一列表，可拖动排序）+「Add subtasks」按钮
@@ -2092,41 +2034,250 @@ private fun SubtaskSection(
                                     .clickable { editingKey = row.key }
                             )
                         }
-                        // 删除该行：编辑态下（含已有子任务被点开编辑、或草稿行）右侧出现 ✕。
-                        // 用 28dp 的小点击区而非 IconButton（后者固定 48dp，会把行距撑大）
+                        // 编辑态：右侧的排序手柄（≡）变成删除符号（✕），点 ✕ 删除该行；
+                        // 非编辑态：显示 ≡ 拖动排序。两者互斥，避免编辑时同时出现两个符号。
                         if (isEditing) {
                             Icon(
                                 Icons.Outlined.Close,
                                 contentDescription = "删除该子任务行",
                                 tint = WuSubtle,
                                 modifier = Modifier
-                                    .padding(start = 6.dp)
+                                    .padding(start = 4.dp)
                                     .clip(CircleShape)
                                     .clickable { onRemove(row) }
                                     .padding(3.dp)
-                                    .size(20.dp)
+                                    .size(22.dp)
                             )
+                        } else {
+                            // 拖动排序手柄：按住上下拖动调整子任务顺序。
+                            // 用 36dp 的 Box 包住 22dp 图标，扩大可点区域，更容易抓住。
+                            Box(
+                                modifier = Modifier
+                                    .padding(start = 4.dp)
+                                    .size(36.dp)
+                                    .pointerInput(row.key) {
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            // 快照当前顺序到可变列表，拖拽中只改它（不碰真实数据）
+                                            dragOrder = rows.map { it.key }.toMutableList()
+                                            dragDy = 0f
+                                            dragKey = row.key
+                                        },
+                                        onDragEnd = {
+                                            val finalOrder = dragOrder
+                                            dragKey = null
+                                            dragDy = 0f
+                                            dragOrder = null
+                                            // 松手才把最终顺序一次性写回真实列表（不在手势回调里实时改，避免重组崩溃）
+                                            if (finalOrder != null) onReorder(finalOrder)
+                                        },
+                                        onDragCancel = {
+                                            dragKey = null
+                                            dragDy = 0f
+                                            dragOrder = null
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragDy += amount.y
+                                            val order =
+                                                (dragOrder as? MutableList<Long>) ?: return@detectDragGestures
+                                            // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
+                                            var guard = 0
+                                            while (guard++ < 30) {
+                                                val i = order.indexOf(row.key)
+                                                if (i < 0) break
+                                                if (dragDy > 0f && i < order.size - 1) {
+                                                    val nh = rowHeights[order[i + 1]] ?: 0f
+                                                    if (nh > 0f && dragDy > nh / 2f) {
+                                                        val tmp = order[i]
+                                                        order[i] = order[i + 1]
+                                                        order[i + 1] = tmp
+                                                        // 重新赋值一份新列表：MutableState 的等值比较会跳过"同引用原地修改"，
+                                                        // 导致不触发重组、其他行不会让位 → 拖动不跟手。换成新列表才能实时重排。
+                                                        dragOrder = ArrayList(order)
+                                                        dragDy -= nh
+                                                        continue
+                                                    }
+                                                }
+                                                if (dragDy < 0f && i > 0) {
+                                                    val ph = rowHeights[order[i - 1]] ?: 0f
+                                                    if (ph > 0f && -dragDy > ph / 2f) {
+                                                        val tmp = order[i]
+                                                        order[i] = order[i - 1]
+                                                        order[i - 1] = tmp
+                                                        dragOrder = ArrayList(order)
+                                                        dragDy += ph
+                                                        continue
+                                                    }
+                                                }
+                                                break
+                                            }
+                                        }
+                                    )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Filled.DragHandle,
+                                    contentDescription = "拖动排序",
+                                    tint = WuSubtle,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
-                        // 拖动排序手柄：按住上下拖动调整子任务顺序。
+                    }
+                }
+            }
+            // 「+」按钮：每点一次追加一行子任务（取代原 "Add subtasks" 文字按钮）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp, bottom = 10.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(WuBackground)
+                        .clickable { onAdd() }
+                ) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = "添加子任务",
+                        tint = WuTitle,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 备注区：与子任务同套拖动排序模型。
+ * 每条 note 一行：笔记图标（整区一个，对齐首行）+ 可编辑文本 + 删除 ✕ + 拖动排序手柄（≡）。
+ * 按住 ≡ 上下拖动即可调整 note 顺序；回车完成本条并新增下一条。
+ * 写回 md 时每条是独立的缩进无序列表项（`- 内容`），排在子任务之前，与文件结构一致。
+ */
+@Composable
+private fun NoteSection(
+    items: List<NoteItem>,
+    onAdd: () -> Unit,
+    onRemove: (NoteItem) -> Unit,
+    onReorder: (List<Long>) -> Unit
+) {
+    // 各行高度（拖动时按"越过相邻行中线即交换"的模型计算），普通 Map 避免重组循环
+    val rowHeights = remember { mutableMapOf<Long, Float>() }
+    var dragKey by remember { mutableStateOf<Long?>(null) }
+    var dragDy by remember { mutableFloatStateOf(0f) }
+    var dragOrder by remember { mutableStateOf<List<Long>?>(null) }
+
+    Row(
+        verticalAlignment = Alignment.Top,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(top = 6.dp)
+    ) {
+        Icon(
+            Icons.Outlined.Notes,
+            contentDescription = null,
+            tint = WuSubtle,
+            modifier = Modifier
+                .padding(top = 4.dp)
+                .size(20.dp)
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            // 拖拽时用快照顺序显示（其他行实时让位）；非拖拽时用原始顺序
+            val displayOrder = dragOrder ?: items.map { it.key }
+            val itemByKey = items.associateBy { it.key }
+            displayOrder.forEach { key ->
+                val item = itemByKey[key] ?: return@forEach
+                key(item.key) {
+                    val dragging = dragKey == item.key
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .zIndex(if (dragging) 1f else 0f)
+                            .graphicsLayer { translationY = if (dragging) dragDy else 0f }
+                            .onGloballyPositioned { c ->
+                                rowHeights[item.key] = c.size.height.toFloat()
+                            }
+                            // 拖动时：不要卡片框/阴影，仅整体轻微半透明，保持"跟手"的轻量手感
+                            .alpha(if (dragging) 0.92f else 1f)
+                            .padding(vertical = 3.dp)
+                    ) {
+                        BasicTextField(
+                            value = item.value,
+                            onValueChange = { item.value = it },
+                            textStyle = TextStyle(fontSize = 15.sp, color = WuTitle, lineHeight = 22.sp),
+                            // 多行：备注可换行，最多 5 行后框内滚动
+                            singleLine = false,
+                            maxLines = 5,
+                            cursorBrush = SolidColor(WuAccent),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = {
+                                // 回车：完成本条 note（内容非空时）并新增一条进入编辑
+                                if (item.value.trim().isNotEmpty()) onAdd()
+                            }),
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(item.fr)
+                                .onPreviewKeyEvent { e ->
+                                    // 回车：完成本条 note 并进入下一条编辑（内容为空则不新增，避免连出空 note）
+                                    if (e.type == KeyEventType.KeyDown &&
+                                        (e.key == Key.Enter || e.key == Key.NumPadEnter)
+                                    ) {
+                                        if (item.value.trim().isNotEmpty()) onAdd()
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                },
+                            decorationBox = { inner ->
+                                Box {
+                                    if (item.value.isEmpty()) {
+                                        Text("Note", color = WuSubtle, fontSize = 15.sp, lineHeight = 22.sp)
+                                    }
+                                    inner()
+                                }
+                            }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        // ✕：删除该条备注
+                        Icon(
+                            Icons.Outlined.Close,
+                            contentDescription = "删除该备注",
+                            tint = WuSubtle,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { onRemove(item) }
+                                .padding(3.dp)
+                                .size(20.dp)
+                        )
+                        // 拖动排序手柄（≡）：按住上下拖动调整备注顺序。
                         // 用 36dp 的 Box 包住 22dp 图标，扩大可点区域，更容易抓住。
                         Box(
                             modifier = Modifier
                                 .padding(start = 4.dp)
                                 .size(36.dp)
-                                .pointerInput(row.key) {
+                                .pointerInput(item.key) {
                                 detectDragGestures(
                                     onDragStart = {
                                         // 快照当前顺序到可变列表，拖拽中只改它（不碰真实数据）
-                                        dragOrder = rows.map { it.key }.toMutableList()
+                                        dragOrder = items.map { it.key }.toMutableList()
                                         dragDy = 0f
-                                        dragKey = row.key
+                                        dragKey = item.key
                                     },
                                     onDragEnd = {
                                         val finalOrder = dragOrder
                                         dragKey = null
                                         dragDy = 0f
                                         dragOrder = null
-                                        // 松手才把最终顺序一次性写回真实列表（不在手势回调里实时改，避免重组崩溃）
+                                        // 松手才把最终顺序一次性写回真实列表
                                         if (finalOrder != null) onReorder(finalOrder)
                                     },
                                     onDragCancel = {
@@ -2142,7 +2293,7 @@ private fun SubtaskSection(
                                         // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
                                         var guard = 0
                                         while (guard++ < 30) {
-                                            val i = order.indexOf(row.key)
+                                            val i = order.indexOf(item.key)
                                             if (i < 0) break
                                             if (dragDy > 0f && i < order.size - 1) {
                                                 val nh = rowHeights[order[i + 1]] ?: 0f
@@ -2183,28 +2334,6 @@ private fun SubtaskSection(
                             )
                         }
                     }
-                }
-            }
-            // 「+」按钮：每点一次追加一行子任务（取代原 "Add subtasks" 文字按钮）
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp, bottom = 10.dp)
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(WuBackground)
-                        .clickable { onAdd() }
-                ) {
-                    Icon(
-                        Icons.Filled.Add,
-                        contentDescription = "添加子任务",
-                        tint = WuTitle,
-                        modifier = Modifier.size(20.dp)
-                    )
                 }
             }
         }
