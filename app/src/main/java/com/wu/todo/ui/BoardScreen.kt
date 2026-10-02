@@ -149,9 +149,11 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -1484,14 +1486,21 @@ private fun TaskEditSheet(
     // KeyboardSheet 的"键盘收起即关闭面板"联动会误把整个编辑面板关掉。
     // 删除后短暂抑制该联动，保证「点删除不退出编辑窗口」。
     var suppressImeClose by remember(task.id) { mutableStateOf(false) }
-    LaunchedEffect(suppressImeClose) {
-        if (suppressImeClose) {
+    // 每次需要"抑制"时让令牌自增：LaunchedEffect 依令牌重启计时。
+    // 若只用一个 Boolean，重复置 true 不会重启旧计时，连续两次删除/交接时第二次就失去保护。
+    var imeSuppressToken by remember(task.id) { mutableStateOf(0) }
+    LaunchedEffect(imeSuppressToken) {
+        if (imeSuppressToken > 0) {
+            suppressImeClose = true
             delay(900)
             suppressImeClose = false
         }
     }
+    // 删除某行、或回车把编辑焦点交接给下一条 note 时，当前输入框会离开组合/失焦 → 输入法短暂收起。
+    // KeyboardSheet 有"键盘收起即关面板"的联动，所以这些时刻都要临时抑制它，保证面板不被误关。
+    val holdPanelOpen: () -> Unit = { imeSuppressToken += 1 }
     val removeNote: (NoteItem) -> Unit = { item ->
-        suppressImeClose = true
+        holdPanelOpen()
         noteItems.remove(item)
     }
     val flushNotes: () -> Unit = { onSetNote(task, noteItems.map { it.value.trim() }) }
@@ -1702,7 +1711,8 @@ private fun TaskEditSheet(
                         items = noteItems,
                         onAdd = addNote,
                         onRemove = removeNote,
-                        onReorder = reorderNotes
+                        onReorder = reorderNotes,
+                        onHandoff = holdPanelOpen
                     )
                     HorizontalDivider(color = WuDivider, thickness = 1.dp)
                 }
@@ -1713,7 +1723,7 @@ private fun TaskEditSheet(
                         autoFocusKey = autoFocusDraftKey,
                         onAdd = addDraft,
                         onRemove = { row ->
-                            suppressImeClose = true
+                            holdPanelOpen()
                             subRows.remove(row)
                         },
                         onReorder = { finalOrder ->
@@ -1926,13 +1936,13 @@ private fun SubtaskSection(
             .padding(horizontal = 20.dp)
             .padding(top = 6.dp)
     ) {
-        // 左侧列表图标：与第一行子任务对齐
+        // 左侧列表图标：整体下移，使其竖向中心与该行文字齐平（行内容 36dp 居中）
         Icon(
             Icons.Outlined.FormatListBulleted,
             contentDescription = null,
             tint = WuSubtle,
             modifier = Modifier
-                .padding(top = 4.dp)
+                .padding(top = 11.dp)
                 .size(20.dp)
         )
         Spacer(Modifier.width(14.dp))
@@ -2181,9 +2191,10 @@ private fun SubtaskSection(
 
 /**
  * 备注区：与子任务同套拖动排序模型。
- * 每条 note 一行：整区一个笔记图标 + 32dp 占位（与子任务复选框等宽，保证文字与子任务文字对齐）
- * + 可编辑文本 + ✕/≡（编辑态显示删除 ✕，非编辑态显示拖动 ≡）。
- * 点击文本进入编辑态；按住 ≡ 上下拖动调整顺序；回车完成本条并新增下一条。
+ * 每条 note 一行：整区一个笔记图标 + 可编辑文本（左端与子任务复选框左端对齐）
+ * + ✕/≡（编辑态显示删除 ✕，非编辑态显示拖动 ≡）。
+ * 点击文本进入编辑态（光标落在文字末尾）；按住 ≡ 上下拖动调整顺序；
+ * 回车完成本条并把编辑焦点交给下一条（末条则新增一条，保持连续录入）。
  * 写回 md 时每条是独立的缩进无序列表项（`- 内容`），排在子任务之前，与文件结构一致。
  */
 @Composable
@@ -2191,7 +2202,9 @@ private fun NoteSection(
     items: List<NoteItem>,
     onAdd: () -> Unit,
     onRemove: (NoteItem) -> Unit,
-    onReorder: (List<Long>) -> Unit
+    onReorder: (List<Long>) -> Unit,
+    /** 编辑焦点在行间交接（回车跳到下一条）时调用：临时抑制键盘收起关面板的联动 */
+    onHandoff: () -> Unit = {}
 ) {
     // 各行高度（拖动时按"越过相邻行中线即交换"的模型计算），普通 Map 避免重组循环
     val rowHeights = remember { mutableMapOf<Long, Float>() }
@@ -2200,6 +2213,10 @@ private fun NoteSection(
     var dragOrder by remember { mutableStateOf<List<Long>?>(null) }
     // 正在编辑（已聚焦）的 note：编辑态下右侧的 ≡ 拖动手柄变成 ✕ 删除符号，与子任务行为一致
     var editingKey by remember { mutableStateOf<Long?>(null) }
+    // 上一次回车的时间戳：软键盘"完成"与硬件回车可能各触发一次回调，
+    // 300ms 内只认第一次，避免一次回车连跳两条 note
+    var lastEnterAt by remember { mutableStateOf(0L) }
+    val keyboard = LocalSoftwareKeyboardController.current
 
     Row(
         verticalAlignment = Alignment.Top,
@@ -2212,8 +2229,9 @@ private fun NoteSection(
             Icons.Outlined.Notes,
             contentDescription = null,
             tint = WuSubtle,
+            // 图标整体下移，使其竖向中心与该行文字（行高 22sp，行内容 36dp 居中）齐平
             modifier = Modifier
-                .padding(top = 4.dp)
+                .padding(top = 11.dp)
                 .size(20.dp)
         )
         // 与子任务区的间距保持一致（14dp），保证两个区的图标起点一致
@@ -2230,7 +2248,12 @@ private fun NoteSection(
                     val isEditing = editingKey == item.key || !item.committed
                     // 进入编辑态即聚焦：fr 只在编辑态（BasicTextField 存在）时才绑定，避免崩溃
                     LaunchedEffect(isEditing, item.key) {
-                        if (isEditing) runCatching { item.fr.requestFocus() }
+                        if (isEditing) {
+                            runCatching { item.fr.requestFocus() }
+                            // 回车切到下一条 note 时，输入焦点在两行之间交接：
+                            // 主动把键盘再拉起一次，避免中间出现"无输入框聚焦"的空档导致键盘收起（进而关面板）
+                            keyboard?.show()
+                        }
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -2245,23 +2268,41 @@ private fun NoteSection(
                             .alpha(if (dragging) 0.92f else 1f)
                             .padding(vertical = 3.dp)
                     ) {
-                        // 左侧 32dp 占位：与子任务行「复选框(20dp) + 间距(12dp)」等宽，
-                        // 让备注文字与子任务文字严格左对齐（左侧区图标、右侧符号本已对齐）
-                        Spacer(Modifier.width(32.dp))
-                        // 回车：草稿备注确认并续加下一条；已有备注则退出编辑态
-                        val onEnter: () -> Unit = {
+                        // 备注不加左侧占位：文字左端与子任务的复选框左端对齐（整体比子任务文字更靠左）
+                        // 回车：完成本条 note 的编辑，并把编辑焦点交给列表里的下一条；
+                        // 若本条已是最后一条，则在末尾新增一条（保持连续录入的习惯）
+                        val onEnter: () -> Unit = enter@{
+                            // 软键盘"完成"与硬件回车可能各回调一次 → 300ms 内只认第一次
+                            val now = System.currentTimeMillis()
+                            if (now - lastEnterAt < 300L) return@enter
+                            lastEnterAt = now
                             if (!item.committed && item.value.trim().isNotEmpty()) {
                                 item.value = item.value.trim()
                                 item.committed = true
+                            }
+                            val i = displayOrder.indexOf(item.key)
+                            val nextKey = if (i in 0 until displayOrder.size - 1) displayOrder[i + 1] else null
+                            if (nextKey != null) {
+                                onHandoff()
+                                editingKey = nextKey
+                            } else if (item.value.trim().isNotEmpty()) {
                                 onAdd()
                             } else {
                                 editingKey = null
                             }
                         }
                         if (isEditing) {
+                            // 显式持有 TextFieldValue：初始 selection 落在文本末尾 —— 点击（或回车接力）
+                            // 进入编辑态时光标就在文字最后。该 state 随"编辑态分支"进出而自动重置：
+                            // 每次重新进入编辑都从当前文本末尾开始，不会被上一次的位置残留影响。
+                            var field by remember(item.key) {
+                                mutableStateOf(
+                                    TextFieldValue(item.value, TextRange(item.value.length, item.value.length))
+                                )
+                            }
                             BasicTextField(
-                                value = item.value,
-                                onValueChange = { item.value = it },
+                                value = field,
+                                onValueChange = { field = it; item.value = it.text },
                                 textStyle = TextStyle(fontSize = 15.sp, color = WuTitle, lineHeight = 22.sp),
                                 // 多行：备注可换行，最多 5 行后框内滚动
                                 singleLine = false,
