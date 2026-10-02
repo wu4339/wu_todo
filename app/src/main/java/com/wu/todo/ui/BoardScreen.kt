@@ -1543,9 +1543,25 @@ private fun TaskEditSheet(
                     singleLine = false,
                     maxLines = 5,
                     cursorBrush = SolidColor(WuAccent),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        // 回车：完成本条 note（内容非空时）并新增一条进入编辑
+                        if (item.value.trim().isNotEmpty()) addNote()
+                    }),
                     modifier = Modifier
                         .weight(1f)
-                        .focusRequester(item.fr),
+                        .focusRequester(item.fr)
+                        .onPreviewKeyEvent { e ->
+                            // 回车：完成本条 note 并进入下一条编辑（内容为空则不新增，避免连出空 note）
+                            if (e.type == KeyEventType.KeyDown &&
+                                (e.key == Key.Enter || e.key == Key.NumPadEnter)
+                            ) {
+                                if (item.value.trim().isNotEmpty()) addNote()
+                                true
+                            } else {
+                                false
+                            }
+                        },
                     decorationBox = { inner ->
                         Box {
                             if (item.value.isEmpty()) {
@@ -2169,28 +2185,26 @@ private fun SubtaskSection(
                     }
                 }
             }
-            // 「Add subtasks」按钮：每点一次追加一行
+            // 「+」按钮：每点一次追加一行子任务（取代原 "Add subtasks" 文字按钮）
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 2.dp, bottom = 10.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(32.dp)
+                        .clip(CircleShape)
                         .background(WuBackground)
                         .clickable { onAdd() }
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
                     Icon(
                         Icons.Filled.Add,
-                        contentDescription = null,
+                        contentDescription = "添加子任务",
                         tint = WuTitle,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Add subtasks", fontSize = 15.sp, color = WuTitle)
                 }
             }
         }
