@@ -133,6 +133,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -2172,6 +2173,8 @@ private fun NoteSection(
     var dragKey by remember { mutableStateOf<Long?>(null) }
     var dragDy by remember { mutableFloatStateOf(0f) }
     var dragOrder by remember { mutableStateOf<List<Long>?>(null) }
+    // 正在编辑（已聚焦）的 note：编辑态下右侧的 ≡ 拖动手柄变成 ✕ 删除符号，与子任务行为一致
+    var editingKey by remember { mutableStateOf<Long?>(null) }
 
     Row(
         verticalAlignment = Alignment.Top,
@@ -2188,7 +2191,7 @@ private fun NoteSection(
                 .padding(top = 4.dp)
                 .size(20.dp)
         )
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             // 拖拽时用快照顺序显示（其他行实时让位）；非拖拽时用原始顺序
             val displayOrder = dragOrder ?: items.map { it.key }
@@ -2197,6 +2200,8 @@ private fun NoteSection(
                 val item = itemByKey[key] ?: return@forEach
                 key(item.key) {
                     val dragging = dragKey == item.key
+                    // 编辑态：该条 note 当前已聚焦 → 右侧 ≡ 变成 ✕ 删除符号
+                    val isEditing = editingKey == item.key
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -2226,6 +2231,11 @@ private fun NoteSection(
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(item.fr)
+                                .onFocusChanged { state ->
+                                    // 聚焦即进入编辑态（≡ 变 ✕）；失焦且仍是当前条则退出编辑态
+                                    if (state.isFocused) editingKey = item.key
+                                    else if (editingKey == item.key) editingKey = null
+                                }
                                 .onPreviewKeyEvent { e ->
                                     // 回车：完成本条 note 并进入下一条编辑（内容为空则不新增，避免连出空 note）
                                     if (e.type == KeyEventType.KeyDown &&
@@ -2246,92 +2256,96 @@ private fun NoteSection(
                                 }
                             }
                         )
-                        Spacer(Modifier.width(8.dp))
-                        // ✕：删除该条备注
-                        Icon(
-                            Icons.Outlined.Close,
-                            contentDescription = "删除该备注",
-                            tint = WuSubtle,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { onRemove(item) }
-                                .padding(3.dp)
-                                .size(20.dp)
-                        )
-                        // 拖动排序手柄（≡）：按住上下拖动调整备注顺序。
-                        // 用 36dp 的 Box 包住 22dp 图标，扩大可点区域，更容易抓住。
-                        Box(
-                            modifier = Modifier
-                                .padding(start = 4.dp)
-                                .size(36.dp)
-                                .pointerInput(item.key) {
-                                detectDragGestures(
-                                    onDragStart = {
-                                        // 快照当前顺序到可变列表，拖拽中只改它（不碰真实数据）
-                                        dragOrder = items.map { it.key }.toMutableList()
-                                        dragDy = 0f
-                                        dragKey = item.key
-                                    },
-                                    onDragEnd = {
-                                        val finalOrder = dragOrder
-                                        dragKey = null
-                                        dragDy = 0f
-                                        dragOrder = null
-                                        // 松手才把最终顺序一次性写回真实列表
-                                        if (finalOrder != null) onReorder(finalOrder)
-                                    },
-                                    onDragCancel = {
-                                        dragKey = null
-                                        dragDy = 0f
-                                        dragOrder = null
-                                    },
-                                    onDrag = { change, amount ->
-                                        change.consume()
-                                        dragDy += amount.y
-                                        val order =
-                                            (dragOrder as? MutableList<Long>) ?: return@detectDragGestures
-                                        // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
-                                        var guard = 0
-                                        while (guard++ < 30) {
-                                            val i = order.indexOf(item.key)
-                                            if (i < 0) break
-                                            if (dragDy > 0f && i < order.size - 1) {
-                                                val nh = rowHeights[order[i + 1]] ?: 0f
-                                                if (nh > 0f && dragDy > nh / 2f) {
-                                                    val tmp = order[i]
-                                                    order[i] = order[i + 1]
-                                                    order[i + 1] = tmp
-                                                    // 重新赋值一份新列表：MutableState 的等值比较会跳过"同引用原地修改"，
-                                                    // 导致不触发重组、其他行不会让位 → 拖动不跟手。换成新列表才能实时重排。
-                                                    dragOrder = ArrayList(order)
-                                                    dragDy -= nh
-                                                    continue
-                                                }
-                                            }
-                                            if (dragDy < 0f && i > 0) {
-                                                val ph = rowHeights[order[i - 1]] ?: 0f
-                                                if (ph > 0f && -dragDy > ph / 2f) {
-                                                    val tmp = order[i]
-                                                    order[i] = order[i - 1]
-                                                    order[i - 1] = tmp
-                                                    dragOrder = ArrayList(order)
-                                                    dragDy += ph
-                                                    continue
-                                                }
-                                            }
-                                            break
-                                        }
-                                    }
-                                )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
+                        // 编辑态（正在编辑该条 note）：右侧的 ≡ 拖动手柄变成 ✕ 删除符号；
+                        // 非编辑态：显示 ≡ 拖动排序。两者互斥，与子任务行为一致、符号横向对齐。
+                        if (isEditing) {
                             Icon(
-                                Icons.Filled.DragHandle,
-                                contentDescription = "拖动排序",
+                                Icons.Outlined.Close,
+                                contentDescription = "删除该备注",
                                 tint = WuSubtle,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier
+                                    .padding(start = 4.dp)
+                                    .clip(CircleShape)
+                                    .clickable { onRemove(item) }
+                                    .padding(3.dp)
+                                    .size(22.dp)
                             )
+                        } else {
+                            // 拖动排序手柄（≡）：按住上下拖动调整备注顺序。
+                            // 用 36dp 的 Box 包住 22dp 图标，扩大可点区域，更容易抓住。
+                            Box(
+                                modifier = Modifier
+                                    .padding(start = 4.dp)
+                                    .size(36.dp)
+                                    .pointerInput(item.key) {
+                                    detectDragGestures(
+                                        onDragStart = {
+                                            // 快照当前顺序到可变列表，拖拽中只改它（不碰真实数据）
+                                            dragOrder = items.map { it.key }.toMutableList()
+                                            dragDy = 0f
+                                            dragKey = item.key
+                                        },
+                                        onDragEnd = {
+                                            val finalOrder = dragOrder
+                                            dragKey = null
+                                            dragDy = 0f
+                                            dragOrder = null
+                                            // 松手才把最终顺序一次性写回真实列表
+                                            if (finalOrder != null) onReorder(finalOrder)
+                                        },
+                                        onDragCancel = {
+                                            dragKey = null
+                                            dragDy = 0f
+                                            dragOrder = null
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragDy += amount.y
+                                            val order =
+                                                (dragOrder as? MutableList<Long>) ?: return@detectDragGestures
+                                            // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
+                                            var guard = 0
+                                            while (guard++ < 30) {
+                                                val i = order.indexOf(item.key)
+                                                if (i < 0) break
+                                                if (dragDy > 0f && i < order.size - 1) {
+                                                    val nh = rowHeights[order[i + 1]] ?: 0f
+                                                    if (nh > 0f && dragDy > nh / 2f) {
+                                                        val tmp = order[i]
+                                                        order[i] = order[i + 1]
+                                                        order[i + 1] = tmp
+                                                        // 重新赋值一份新列表：MutableState 的等值比较会跳过"同引用原地修改"，
+                                                        // 导致不触发重组、其他行不会让位 → 拖动不跟手。换成新列表才能实时重排。
+                                                        dragOrder = ArrayList(order)
+                                                        dragDy -= nh
+                                                        continue
+                                                    }
+                                                }
+                                                if (dragDy < 0f && i > 0) {
+                                                    val ph = rowHeights[order[i - 1]] ?: 0f
+                                                    if (ph > 0f && -dragDy > ph / 2f) {
+                                                        val tmp = order[i]
+                                                        order[i] = order[i - 1]
+                                                        order[i - 1] = tmp
+                                                        dragOrder = ArrayList(order)
+                                                        dragDy += ph
+                                                        continue
+                                                    }
+                                                }
+                                                break
+                                            }
+                                        }
+                                    )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Filled.DragHandle,
+                                    contentDescription = "拖动排序",
+                                    tint = WuSubtle,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
                     }
                 }
