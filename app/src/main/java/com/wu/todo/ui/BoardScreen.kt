@@ -133,7 +133,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1470,18 +1469,31 @@ private fun TaskEditSheet(
     // 多条备注：每条独立成行，可增删改；key 与子任务同套规则（已有负数 / 新增正数），永不与子任务撞 key
     val noteItems = remember(task.id) {
         mutableStateListOf<NoteItem>().apply {
-            task.notes.forEachIndexed { i, n -> add(NoteItem(-(i + 1).toLong(), n)) }
+            task.notes.forEachIndexed { i, n -> add(NoteItem(-(i + 1).toLong(), n, committed = true)) }
         }
     }
     var noteSeq by remember(task.id) { mutableStateOf(0L) }
     var autoFocusNoteKey by remember(task.id) { mutableStateOf(0L) }
     val addNote: () -> Unit = {
         noteSeq += 1
-        val item = NoteItem(noteSeq, "")
+        val item = NoteItem(noteSeq, "", committed = false)
         noteItems.add(item)
         autoFocusNoteKey = item.key
     }
-    val removeNote: (NoteItem) -> Unit = { noteItems.remove(it) }
+    // 删除子任务/备注时，被删除的输入框会从组合中移除 → 输入法自动收起 →
+    // KeyboardSheet 的"键盘收起即关闭面板"联动会误把整个编辑面板关掉。
+    // 删除后短暂抑制该联动，保证「点删除不退出编辑窗口」。
+    var suppressImeClose by remember(task.id) { mutableStateOf(false) }
+    LaunchedEffect(suppressImeClose) {
+        if (suppressImeClose) {
+            delay(900)
+            suppressImeClose = false
+        }
+    }
+    val removeNote: (NoteItem) -> Unit = { item ->
+        suppressImeClose = true
+        noteItems.remove(item)
+    }
     val flushNotes: () -> Unit = { onSetNote(task, noteItems.map { it.value.trim() }) }
 
     // 追加一行空草稿并自动聚焦
@@ -1552,7 +1564,8 @@ private fun TaskEditSheet(
         // 关闭面板前先把子任务列表落盘，避免输入内容丢失
         onDismiss = { flushNotes(); flushSubs(); onDismiss() },
         focus = textFocus,
-        imeAutoClose = !moveSheetOpen,
+        // 删除行时 suppressImeClose 短暂为 true，避免键盘收起连带关闭面板
+        imeAutoClose = !moveSheetOpen && !suppressImeClose,
         contentPadding = PaddingValues(0.dp),
         // 打开编辑面板不弹键盘（点输入框才弹）；面板整体再上移 10dp（顶部间距 40 → 30）
         autoFocus = false,
@@ -1699,7 +1712,10 @@ private fun TaskEditSheet(
                         rows = subRows,
                         autoFocusKey = autoFocusDraftKey,
                         onAdd = addDraft,
-                        onRemove = { row -> subRows.remove(row) },
+                        onRemove = { row ->
+                            suppressImeClose = true
+                            subRows.remove(row)
+                        },
                         onReorder = { finalOrder ->
                             // 松手后才按最终顺序一次性重排真实数据（拖拽过程中不碰真实列表，避免重组崩溃）
                             val map = subRows.associateBy { it.key }
@@ -1816,9 +1832,13 @@ private class SubRow(
 /** 一条备注：与子任务同套 key 规则（已有负数 / 新增正数），各自持有 FocusRequester 便于新增后自动聚焦 */
 private class NoteItem(
     val key: Long,
-    value: String
+    value: String,
+    committed: Boolean = false
 ) {
     var value by mutableStateOf(value)
+    // 已有备注初始为"只读"（committed=true），点击文本才进入编辑态；
+    // 新增的草稿备注 committed=false，天然处于编辑态。与子任务同一套模型。
+    var committed by mutableStateOf(committed)
     val fr = FocusRequester()
 }
 
@@ -2036,19 +2056,23 @@ private fun SubtaskSection(
                             )
                         }
                         // 编辑态：右侧的排序手柄（≡）变成删除符号（✕），点 ✕ 删除该行；
-                        // 非编辑态：显示 ≡ 拖动排序。两者互斥，避免编辑时同时出现两个符号。
+                        // 非编辑态：显示 ≡ 拖动排序。两者都占 36dp，宽度一致 → 文字区宽度不变、符号对齐。
                         if (isEditing) {
-                            Icon(
-                                Icons.Outlined.Close,
-                                contentDescription = "删除该子任务行",
-                                tint = WuSubtle,
+                            Box(
                                 modifier = Modifier
                                     .padding(start = 4.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
-                                    .clickable { onRemove(row) }
-                                    .padding(3.dp)
-                                    .size(22.dp)
-                            )
+                                    .clickable { onRemove(row) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Close,
+                                    contentDescription = "删除该子任务行",
+                                    tint = WuSubtle,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         } else {
                             // 拖动排序手柄：按住上下拖动调整子任务顺序。
                             // 用 36dp 的 Box 包住 22dp 图标，扩大可点区域，更容易抓住。
@@ -2157,8 +2181,9 @@ private fun SubtaskSection(
 
 /**
  * 备注区：与子任务同套拖动排序模型。
- * 每条 note 一行：笔记图标（整区一个，对齐首行）+ 可编辑文本 + 删除 ✕ + 拖动排序手柄（≡）。
- * 按住 ≡ 上下拖动即可调整 note 顺序；回车完成本条并新增下一条。
+ * 每条 note 一行：整区一个笔记图标 + 32dp 占位（与子任务复选框等宽，保证文字与子任务文字对齐）
+ * + 可编辑文本 + ✕/≡（编辑态显示删除 ✕，非编辑态显示拖动 ≡）。
+ * 点击文本进入编辑态；按住 ≡ 上下拖动调整顺序；回车完成本条并新增下一条。
  * 写回 md 时每条是独立的缩进无序列表项（`- 内容`），排在子任务之前，与文件结构一致。
  */
 @Composable
@@ -2191,7 +2216,8 @@ private fun NoteSection(
                 .padding(top = 4.dp)
                 .size(20.dp)
         )
-        Spacer(Modifier.width(12.dp))
+        // 与子任务区的间距保持一致（14dp），保证两个区的图标起点一致
+        Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             // 拖拽时用快照顺序显示（其他行实时让位）；非拖拽时用原始顺序
             val displayOrder = dragOrder ?: items.map { it.key }
@@ -2200,8 +2226,12 @@ private fun NoteSection(
                 val item = itemByKey[key] ?: return@forEach
                 key(item.key) {
                     val dragging = dragKey == item.key
-                    // 编辑态：该条 note 当前已聚焦 → 右侧 ≡ 变成 ✕ 删除符号
-                    val isEditing = editingKey == item.key
+                    // 编辑态：用户点击进入的备注行，或新增且未确认的草稿备注（天然可编辑）
+                    val isEditing = editingKey == item.key || !item.committed
+                    // 进入编辑态即聚焦：fr 只在编辑态（BasicTextField 存在）时才绑定，避免崩溃
+                    LaunchedEffect(isEditing, item.key) {
+                        if (isEditing) runCatching { item.fr.requestFocus() }
+                    }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -2215,61 +2245,83 @@ private fun NoteSection(
                             .alpha(if (dragging) 0.92f else 1f)
                             .padding(vertical = 3.dp)
                     ) {
-                        BasicTextField(
-                            value = item.value,
-                            onValueChange = { item.value = it },
-                            textStyle = TextStyle(fontSize = 15.sp, color = WuTitle, lineHeight = 22.sp),
-                            // 多行：备注可换行，最多 5 行后框内滚动
-                            singleLine = false,
-                            maxLines = 5,
-                            cursorBrush = SolidColor(WuAccent),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = {
-                                // 回车：完成本条 note（内容非空时）并新增一条进入编辑
-                                if (item.value.trim().isNotEmpty()) onAdd()
-                            }),
-                            modifier = Modifier
-                                .weight(1f)
-                                .focusRequester(item.fr)
-                                .onFocusChanged { state ->
-                                    // 聚焦即进入编辑态（≡ 变 ✕）；失焦且仍是当前条则退出编辑态
-                                    if (state.isFocused) editingKey = item.key
-                                    else if (editingKey == item.key) editingKey = null
-                                }
-                                .onPreviewKeyEvent { e ->
-                                    // 回车：完成本条 note 并进入下一条编辑（内容为空则不新增，避免连出空 note）
-                                    if (e.type == KeyEventType.KeyDown &&
-                                        (e.key == Key.Enter || e.key == Key.NumPadEnter)
-                                    ) {
-                                        if (item.value.trim().isNotEmpty()) onAdd()
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                },
-                            decorationBox = { inner ->
-                                Box {
-                                    if (item.value.isEmpty()) {
-                                        Text("Note", color = WuSubtle, fontSize = 15.sp, lineHeight = 22.sp)
-                                    }
-                                    inner()
-                                }
+                        // 左侧 32dp 占位：与子任务行「复选框(20dp) + 间距(12dp)」等宽，
+                        // 让备注文字与子任务文字严格左对齐（左侧区图标、右侧符号本已对齐）
+                        Spacer(Modifier.width(32.dp))
+                        // 回车：草稿备注确认并续加下一条；已有备注则退出编辑态
+                        val onEnter: () -> Unit = {
+                            if (!item.committed && item.value.trim().isNotEmpty()) {
+                                item.value = item.value.trim()
+                                item.committed = true
+                                onAdd()
+                            } else {
+                                editingKey = null
                             }
-                        )
-                        // 编辑态（正在编辑该条 note）：右侧的 ≡ 拖动手柄变成 ✕ 删除符号；
-                        // 非编辑态：显示 ≡ 拖动排序。两者互斥，与子任务行为一致、符号横向对齐。
+                        }
                         if (isEditing) {
-                            Icon(
-                                Icons.Outlined.Close,
-                                contentDescription = "删除该备注",
-                                tint = WuSubtle,
+                            BasicTextField(
+                                value = item.value,
+                                onValueChange = { item.value = it },
+                                textStyle = TextStyle(fontSize = 15.sp, color = WuTitle, lineHeight = 22.sp),
+                                // 多行：备注可换行，最多 5 行后框内滚动
+                                singleLine = false,
+                                maxLines = 5,
+                                cursorBrush = SolidColor(WuAccent),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { onEnter() }),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .focusRequester(item.fr)
+                                    .onPreviewKeyEvent { e ->
+                                        // 回车：完成本条 note 并进入下一条编辑（内容为空则不新增，避免连出空 note）
+                                        if (e.type == KeyEventType.KeyDown &&
+                                            (e.key == Key.Enter || e.key == Key.NumPadEnter)
+                                        ) {
+                                            onEnter()
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    },
+                                decorationBox = { inner ->
+                                    Box {
+                                        if (item.value.isEmpty()) {
+                                            Text("Note", color = WuSubtle, fontSize = 15.sp, lineHeight = 22.sp)
+                                        }
+                                        inner()
+                                    }
+                                }
+                            )
+                        } else {
+                            // 只读文本：点击即进入编辑态（右侧 ≡ 同步变成 ✕ 删除符号）
+                            Text(
+                                text = item.value,
+                                fontSize = 15.sp,
+                                color = WuTitle,
+                                lineHeight = 22.sp,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { editingKey = item.key }
+                            )
+                        }
+                        // 编辑态（正在编辑该条 note）：右侧的 ≡ 拖动手柄变成 ✕ 删除符号；
+                        // 非编辑态：显示 ≡ 拖动排序。两者都占 36dp，宽度一致 → 文字区宽度不变、符号对齐。
+                        if (isEditing) {
+                            Box(
                                 modifier = Modifier
                                     .padding(start = 4.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
-                                    .clickable { onRemove(item) }
-                                    .padding(3.dp)
-                                    .size(22.dp)
-                            )
+                                    .clickable { onRemove(item) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Close,
+                                    contentDescription = "删除该备注",
+                                    tint = WuSubtle,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         } else {
                             // 拖动排序手柄（≡）：按住上下拖动调整备注顺序。
                             // 用 36dp 的 Box 包住 22dp 图标，扩大可点区域，更容易抓住。
