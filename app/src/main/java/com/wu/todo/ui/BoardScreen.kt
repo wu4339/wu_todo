@@ -1734,7 +1734,8 @@ private fun TaskEditSheet(
                                 subRows.clear()
                                 subRows.addAll(reordered)
                             }
-                        }
+                        },
+                        onHandoff = holdPanelOpen
                     )
                     HorizontalDivider(color = WuDivider, thickness = 1.dp)
                 }
@@ -1906,7 +1907,8 @@ private fun KanbanSection.subtaskProgress(task: KanbanTask): Pair<Int, Int> {
 /**
  * 子任务区：统一列出「已有子任务（只读）+ 新增草稿行（可编辑）」，
  * 每行右侧是拖动排序手柄（≡），按住上下拖动即可调整顺序；
- * 底部是「Add subtasks」按钮（每点一次追加一行草稿）。
+ * 底部是「+」按钮（每点一次追加一行草稿）。
+ * 点击只读文本即进入编辑（光标落在文字末尾）；回车完成本条并把焦点交给下一条（草稿则续加一行）。
  */
 @Composable
 private fun SubtaskSection(
@@ -1914,7 +1916,9 @@ private fun SubtaskSection(
     autoFocusKey: Long,
     onAdd: () -> Unit,
     onRemove: (SubRow) -> Unit,
-    onReorder: (List<Long>) -> Unit
+    onReorder: (List<Long>) -> Unit,
+    /** 编辑焦点在行间交接（回车跳到下一条）时调用：临时抑制键盘收起关面板的联动 */
+    onHandoff: () -> Unit = {}
 ) {
     // 各行高度（拖动时按"越过相邻行中线即交换"的模型计算）。
     // 普通 Map（非 Compose 状态）：onGloballyPositioned 回调里只写普通 Map，不再触发重组，
@@ -1928,6 +1932,9 @@ private fun SubtaskSection(
     // 正在编辑的子任务行 key：点击只读文本即进入编辑态；编辑态下该行显示输入框 + 右侧 ✕。
     // 草稿行（新增且未确认）天然处于编辑态
     var editingKey by remember { mutableStateOf<Long?>(null) }
+    // 上一次回车的时间戳：软键盘"完成"与硬件回车可能各回调一次，300ms 内只认第一次，避免连跳两行
+    var lastEnterAt by remember { mutableStateOf(0L) }
+    val keyboard = LocalSoftwareKeyboardController.current
 
     Row(
         verticalAlignment = Alignment.Top,
@@ -1950,16 +1957,33 @@ private fun SubtaskSection(
             // 拖拽时用快照顺序显示（其他行实时让位）；非拖拽时用原始顺序
             val displayOrder = dragOrder ?: rows.map { it.key }
             val rowByKey = rows.associateBy { it.key }
-            // 回车 / 键盘"完成"：确认当前子任务并立刻追加下一行，保持连续录入
-            val submitAndNext: (SubRow) -> Unit = { r ->
-                if (r.existing == null && !r.committed && r.value.trim().isNotEmpty()) {
-                    r.value = r.value.trim()
-                    r.committed = true
-                    onAdd()
-                }
-            }
             displayOrder.forEach { key ->
                 val row = rowByKey[key] ?: return@forEach
+                // 回车：完成本条子任务的编辑。
+                // 草稿行（新增未确认）：确认并续加一行；已有子任务：焦点交给下一条（末条则退出编辑）
+                val onEnter: () -> Unit = enter@{
+                    // 软键盘"完成"与硬件回车可能各回调一次 → 300ms 内只认第一次
+                    val now = System.currentTimeMillis()
+                    if (now - lastEnterAt < 300L) return@enter
+                    lastEnterAt = now
+                    val i = displayOrder.indexOf(row.key)
+                    val nextKey = if (i in 0 until displayOrder.size - 1) displayOrder[i + 1] else null
+                    if (row.existing == null) {
+                        // 草稿行：回车确认并追加下一行（保持连续录入）；空草稿则退出编辑
+                        if (row.value.trim().isNotEmpty()) {
+                            row.value = row.value.trim()
+                            row.committed = true
+                            onAdd()
+                        } else {
+                            editingKey = null
+                        }
+                    } else if (nextKey != null) {
+                        onHandoff()
+                        editingKey = nextKey
+                    } else {
+                        editingKey = null
+                    }
+                }
                 key(row.key) {
                     val dragging = dragKey == row.key
                     // 编辑态：用户点击进入的行，或新增且未确认的草稿行（天然可编辑）
@@ -1968,7 +1992,12 @@ private fun SubtaskSection(
                     // 进入编辑态即聚焦：fr 只在编辑态（BasicTextField 存在）时才被绑定，
                     // 不会在只读行上调用未绑定 FocusRequester → 避免历史闪退
                     LaunchedEffect(isEditing, row.key) {
-                        if (isEditing) runCatching { fr.requestFocus() }
+                        if (isEditing) {
+                            runCatching { fr.requestFocus() }
+                            // 回车切到下一条子任务时，焦点在两行间交接：主动拉起键盘一次，
+                            // 避免中间"无输入框聚焦"空档导致键盘收起（进而关面板）
+                            keyboard?.show()
+                        }
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1994,13 +2023,22 @@ private fun SubtaskSection(
                                 .clip(CircleShape)
                                 .clickable { row.done = !row.done }
                         )
-                        Spacer(Modifier.width(12.dp))
+                        // 复选框与文字间距收窄，文字与复选框挨得更近（之前 12dp 偏宽）
+                        Spacer(Modifier.width(8.dp))
                         if (isEditing) {
                             // 编辑态：可编辑输入框；回车即确认/退出（草稿续行，已有子任务退出编辑）
                             // 用 BasicTextField 而非 TextField：后者最小高度固定 56dp，会让行间距过大
+                            // 显式持有 TextFieldValue：初始 selection 落在文本末尾 —— 点击（或回车接力）
+                            // 进入编辑态时光标就在文字最后。state 随"编辑态分支"进出自动重置，
+                            // 每次重新进入编辑都从当前文本末尾开始。
+                            var field by remember(row.key) {
+                                mutableStateOf(
+                                    TextFieldValue(row.value, TextRange(row.value.length, row.value.length))
+                                )
+                            }
                             BasicTextField(
-                                value = row.value,
-                                onValueChange = { row.value = it },
+                                value = field,
+                                onValueChange = { field = it; row.value = it.text },
                                 textStyle = TextStyle(
                                     fontSize = 15.sp,
                                     color = if (row.done) WuSubtle else WuTitle,
@@ -2012,27 +2050,16 @@ private fun SubtaskSection(
                                 maxLines = 5,
                                 cursorBrush = SolidColor(WuAccent),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                keyboardActions = KeyboardActions(onDone = {
-                                    if (row.existing == null && !row.committed && row.value.trim().isNotEmpty()) {
-                                        submitAndNext(row)
-                                    } else {
-                                        // 已有子任务编辑：回车即退出编辑态
-                                        editingKey = null
-                                    }
-                                }),
+                                keyboardActions = KeyboardActions(onDone = { onEnter() }),
                                 modifier = Modifier
                                     .weight(1f)
                                     .focusRequester(fr)
                                     .onPreviewKeyEvent { e ->
-                                        // 回车：草稿确认并续行；已存在的子任务则退出编辑态（软/硬键盘换行键都吃掉）
+                                        // 回车：草稿确认并续行；已有子任务则把焦点交给下一条（软/硬键盘换行键都吃掉）
                                         if (e.type == KeyEventType.KeyDown &&
                                             (e.key == Key.Enter || e.key == Key.NumPadEnter)
                                         ) {
-                                            if (row.existing == null && !row.committed && row.value.trim().isNotEmpty()) {
-                                                submitAndNext(row)
-                                            } else {
-                                                editingKey = null
-                                            }
+                                            onEnter()
                                             true
                                         } else {
                                             false
@@ -2440,6 +2467,28 @@ private fun NoteSection(
                                 )
                             }
                         }
+                    }
+                }
+                // 备注区底部「+」按钮：每点一次在末尾追加一条空备注并进入编辑（与子任务区一致）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp, bottom = 10.dp)
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(WuBackground)
+                            .clickable { onAdd() }
+                    ) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = "添加备注",
+                            tint = WuTitle,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }
