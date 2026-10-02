@@ -67,6 +67,7 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Cancel
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -201,7 +202,7 @@ fun BoardScreen(
 
     // ===== 列表模式（参考图）：通栏的列区块，列头可折叠 =====
     // 默认用列表模式；顶栏可切回"瀑布流网格"总览
-    var listMode by rememberSaveable { mutableStateOf(true) }
+    var listMode by rememberSaveable { mutableStateOf(false) }
     // 已折叠的列（按列名记，列名改了会重新展开，可接受）
     var collapsedTitles by rememberSaveable { mutableStateOf(listOf<String>()) }
     // 列表模式下打开的列（列头 ⋮ 菜单里的入口：添加卡片 / 编辑列表）
@@ -1991,11 +1992,11 @@ private fun SubtaskSection(
                             .padding(vertical = 3.dp)
                     ) {
                         // 子任务勾选框：点击切换"已完成/未完成"，改动随保存/关闭写回 .md
-                        // 用方块复选框（CheckBox），完成时文本加删除线并变灰，给出明确的"已完成"效果
+                        // 未完成：空心方块（可点选完成）；已完成：不要方块，只显示一个灰色对勾。
                         Icon(
-                            imageVector = if (row.done) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
+                            imageVector = if (row.done) Icons.Outlined.Check else Icons.Outlined.CheckBoxOutlineBlank,
                             contentDescription = if (row.done) "标记为未完成" else "标记为已完成",
-                            tint = if (row.done) WuAccent else WuSubtle,
+                            tint = WuSubtle,
                             modifier = Modifier
                                 .size(20.dp)
                                 .clip(CircleShape)
