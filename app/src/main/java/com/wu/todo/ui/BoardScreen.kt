@@ -212,6 +212,14 @@ fun BoardScreen(
     var listEditKey by remember { mutableStateOf<String?>(null) }
     // 列表模式下打开的任务编辑页：列 key + 任务行号（用行号而非对象，避免数据刷新后引用过期）
     var listTaskRef by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    // 列表模式默认折叠所有列：首次加载到列后统一折叠一次（之后用户手动展开/折叠仍生效，不被覆盖）
+    var listCollapsedInit by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.sections) {
+        if (!listCollapsedInit && state.sections.isNotEmpty()) {
+            collapsedTitles = state.sections.map { it.title }
+            listCollapsedInit = true
+        }
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -262,19 +270,14 @@ fun BoardScreen(
         Modifier
             .fillMaxSize()
             .pointerInput(Unit) {
-                // 屏幕左缘向右滑动 → 打开左侧栏（自绘抽屉）
-                val edgePx = 60.dp.toPx()
+                // 主界面任意位置向右滑动 → 打开左侧栏（自绘抽屉）
                 val openPx = 40.dp.toPx()
-                var startX = 0f
                 var acc = 0f
                 detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        startX = offset.x
-                        acc = 0f
-                    },
+                    onDragStart = { acc = 0f },
                     onHorizontalDrag = { change, amount ->
                         acc += amount
-                        if (!drawerOpen && startX < edgePx && acc > openPx) {
+                        if (!drawerOpen && acc > openPx) {
                             drawerOpen = true
                         }
                         change.consume()
