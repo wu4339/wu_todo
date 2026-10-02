@@ -1518,25 +1518,24 @@ private fun TaskEditSheet(
         onSetSubtasks(task, subRows.map { it.value.trim() to it.done })
     }
 
-    // "Add items" 入口行（未展开时、以及备注行下方共用）
+    // "Add items" 入口（紧凑型）：放在列名那一行的最右侧，点击展开/收起选项菜单。
+    // 菜单项本身在列名行下方内联展开（见下方布局）
     val addItemsEntry: @Composable () -> Unit = {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .clickable { addItemState = 1 }
-                .padding(horizontal = 20.dp)
-                .padding(vertical = 14.dp)
+                .clip(RoundedCornerShape(50))
+                .clickable { addItemState = if (addItemState == 1) 0 else 1 }
+                .padding(horizontal = 8.dp, vertical = 5.dp)
         ) {
             Icon(
                 Icons.Outlined.AddCircle,
-                contentDescription = null,
+                contentDescription = "Add items",
                 tint = WuSubtle,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(20.dp)
             )
-            Spacer(Modifier.width(14.dp))
-            Text("Add items", fontSize = 15.sp, color = WuTitle)
+            Spacer(Modifier.width(6.dp))
+            Text("Add items", fontSize = 13.sp, color = WuSubtle)
         }
     }
 
@@ -1662,10 +1661,11 @@ private fun TaskEditSheet(
                     .focusRequester(textFocus)
             )
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
-            // 移动到其他列
+            // 移动到其他列 + 右侧「Add items」入口
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
+                    .fillMaxWidth()
                     .padding(horizontal = 20.dp)
                     .padding(vertical = 10.dp)
             ) {
@@ -1691,6 +1691,59 @@ private fun TaskEditSheet(
                         tint = WuAccent,
                         modifier = Modifier.size(18.dp)
                     )
+                }
+                // 把「Add items」挪到列名这一行的最右边：点击展开/收起 Note / Subtask 选项菜单
+                Spacer(Modifier.weight(1f))
+                addItemsEntry()
+            }
+            // 选项菜单：Note（备注）与 Subtask（子任务），紧贴在列名行下方展开
+            if (addItemState == 1) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(WuBackground)
+                            .clickable {
+                                addNote()
+                                addItemState = 0
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Notes,
+                            contentDescription = null,
+                            tint = WuSubtle,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Text("Note", fontSize = 15.sp, color = WuTitle)
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(WuBackground)
+                            .clickable {
+                                addItemState = 3
+                                addDraft()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.SubdirectoryArrowRight,
+                            contentDescription = null,
+                            tint = WuSubtle,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Text("Subtask", fontSize = 15.sp, color = WuTitle)
+                    }
                 }
             }
             HorizontalDivider(color = WuDivider, thickness = 1.dp)
@@ -1740,63 +1793,7 @@ private fun TaskEditSheet(
                     )
                     HorizontalDivider(color = WuDivider, thickness = 1.dp)
                 }
-                // Add items：先弹出选项菜单（Note / Subtask），再进入对应输入行
-                when (addItemState) {
-                    0 -> {
-                        addItemsEntry()
-                    }
-                    1 -> {
-                        // 选项菜单：Note（备注）与 Subtask（子任务）
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(WuBackground)
-                                    .clickable {
-                                        addNote()
-                                        addItemState = 0
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 12.dp)
-                            ) {
-                                Icon(
-                                    Icons.Outlined.Notes,
-                                    contentDescription = null,
-                                    tint = WuSubtle,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(Modifier.width(14.dp))
-                                Text("Note", fontSize = 15.sp, color = WuTitle)
-                            }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(WuBackground)
-                                    .clickable { addItemState = 3; addDraft() }
-                                    .padding(horizontal = 14.dp, vertical = 12.dp)
-                            ) {
-                                Icon(
-                                    Icons.Outlined.SubdirectoryArrowRight,
-                                    contentDescription = null,
-                                    tint = WuSubtle,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(Modifier.width(14.dp))
-                                Text("Subtask", fontSize = 15.sp, color = WuTitle)
-                            }
-                        }
-                    }
-                    else -> {
-                        // 0 = 收起；2 = 备注编辑中；3 = 子任务编辑中（备注/子任务都已在上面渲染各自区块）
-                        addItemsEntry()
-                    }
-                }
+                // 「Add items」入口与选项菜单已上移到列名那一行的最右侧（见上方布局）
                     // 悬浮保存按钮的让位空间：内容滚到底时，最后一项不会被按钮盖住
                     Spacer(Modifier.height(76.dp))
                 }
@@ -1995,7 +1992,10 @@ private fun SubtaskSection(
                         onHandoff()
                         editingKey = nextKey
                     } else {
-                        editingKey = null
+                        // 已经是最后一条子任务：回车先完成本条编辑（trim 落盘），再在末尾新增一条子任务继续录入
+                        row.value = row.value.trim()
+                        onHandoff()
+                        onAdd()
                     }
                 }
                 key(row.key) {
