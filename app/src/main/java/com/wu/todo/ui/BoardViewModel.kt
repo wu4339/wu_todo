@@ -45,8 +45,15 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     val state: MutableState<BoardUiState> = mutableStateOf(BoardUiState())
 
     init {
-        prefs.getString("last_uri", null)?.let { saved ->
-            runCatching { openFile(Uri.parse(saved)) }
+        // 恢复上次的看板文件夹（用于填满左侧抽屉文件列表），再恢复上次打开的具体文件。
+        // 顺序：先文件夹后文件，保证最终打开的是用户最后停留的那个文件。
+        val folderSaved = prefs.getString("last_folder", null)
+        val fileSaved = prefs.getString("last_uri", null)
+        if (folderSaved != null) {
+            runCatching { openFolder(Uri.parse(folderSaved)) }
+        }
+        if (fileSaved != null) {
+            runCatching { openFile(Uri.parse(fileSaved)) }
         }
     }
 
@@ -57,6 +64,8 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openFolder(uri: Uri) {
         takePersistable(uri)
+        // 记住选中的看板文件夹，重启后据此重填左侧抽屉文件列表（仅本机持久化，不写回 .md）
+        prefs.edit().putString("last_folder", uri.toString()).apply()
         val files = runCatching { repo.listMarkdownInTree(uri) }.getOrDefault(emptyList())
         if (files.isEmpty()) {
             update { copy(message = "该文件夹下没有找到 .md 文件") }

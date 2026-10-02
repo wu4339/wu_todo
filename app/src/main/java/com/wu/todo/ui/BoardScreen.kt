@@ -1936,6 +1936,9 @@ private fun SubtaskSection(
     // 拖拽中的顺序快照（仅存 key 顺序的状态）；拖拽过程只改它，结束才一次性写回真实数据，
     // 避免手势回调里实时改真实列表触发重组崩溃——与列内任务拖动用同一套成熟模式
     var dragOrder by remember { mutableStateOf<List<Long>?>(null) }
+    // 正在编辑的子任务行 key：点击只读文本即进入编辑态；编辑态下该行显示输入框 + 右侧 ✕。
+    // 草稿行（新增且未确认）天然处于编辑态
+    var editingKey by remember { mutableStateOf<Long?>(null) }
 
     Row(
         verticalAlignment = Alignment.Top,
@@ -1970,13 +1973,13 @@ private fun SubtaskSection(
                 val row = rowByKey[key] ?: return@forEach
                 key(row.key) {
                     val dragging = dragKey == row.key
+                    // 编辑态：用户点击进入的行，或新增且未确认的草稿行（天然可编辑）
+                    val isEditing = editingKey == row.key || (row.existing == null && !row.committed)
                     val fr = remember { FocusRequester() }
-                    // 只有正在输入的草稿行才绑定了 fr；对只读行（已有子任务/已确认行）调用
-                    // requestFocus() 会抛 IllegalStateException → 面板一闪即崩
-                    LaunchedEffect(autoFocusKey, row.key, row.committed) {
-                        if (autoFocusKey == row.key && row.existing == null && !row.committed) {
-                            runCatching { fr.requestFocus() }
-                        }
+                    // 进入编辑态即聚焦：fr 只在编辑态（BasicTextField 存在）时才被绑定，
+                    // 不会在只读行上调用未绑定 FocusRequester → 避免历史闪退
+                    LaunchedEffect(isEditing, row.key) {
+                        if (isEditing) runCatching { fr.requestFocus() }
                     }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -2003,19 +2006,9 @@ private fun SubtaskSection(
                                 .clickable { row.done = !row.done }
                         )
                         Spacer(Modifier.width(12.dp))
-                        if (row.existing != null || row.committed) {
-                            // 已有子任务 / 已回车确认的子任务：只读文本
-                            Text(
-                                text = row.value,
-                                fontSize = 15.sp,
-                                color = if (row.done) WuSubtle else WuTitle,
-                                textDecoration = if (row.done) TextDecoration.LineThrough else null,
-                                lineHeight = 22.sp,
-                                modifier = Modifier.weight(1f)
-                            )
-                        } else {
-                            // 新增草稿行：多行输入 + 回车即确认并续行 + 右侧 ✕ 删除该行。
-                            // 用 BasicTextField 而非 TextField：后者的最小高度固定 56dp，会让行间距过大。
+                        if (isEditing) {
+                            // 编辑态：可编辑输入框；回车即确认/退出（草稿续行，已有子任务退出编辑）
+                            // 用 BasicTextField 而非 TextField：后者最小高度固定 56dp，会让行间距过大
                             BasicTextField(
                                 value = row.value,
                                 onValueChange = { row.value = it },
@@ -2030,16 +2023,27 @@ private fun SubtaskSection(
                                 maxLines = 5,
                                 cursorBrush = SolidColor(WuAccent),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                keyboardActions = KeyboardActions(onDone = { submitAndNext(row) }),
+                                keyboardActions = KeyboardActions(onDone = {
+                                    if (row.existing == null && !row.committed && row.value.trim().isNotEmpty()) {
+                                        submitAndNext(row)
+                                    } else {
+                                        // 已有子任务编辑：回车即退出编辑态
+                                        editingKey = null
+                                    }
+                                }),
                                 modifier = Modifier
                                     .weight(1f)
                                     .focusRequester(fr)
                                     .onPreviewKeyEvent { e ->
-                                        // 回车：确认当前子任务并继续下一条（软/硬键盘的换行键都吃掉，不插入换行）
+                                        // 回车：草稿确认并续行；已存在的子任务则退出编辑态（软/硬键盘换行键都吃掉）
                                         if (e.type == KeyEventType.KeyDown &&
                                             (e.key == Key.Enter || e.key == Key.NumPadEnter)
                                         ) {
-                                            submitAndNext(row)
+                                            if (row.existing == null && !row.committed && row.value.trim().isNotEmpty()) {
+                                                submitAndNext(row)
+                                            } else {
+                                                editingKey = null
+                                            }
                                             true
                                         } else {
                                             false
@@ -2059,10 +2063,22 @@ private fun SubtaskSection(
                                     }
                                 }
                             )
+                        } else {
+                            // 只读文本：点击即进入编辑态，方便直接修改已有子任务
+                            Text(
+                                text = row.value,
+                                fontSize = 15.sp,
+                                color = if (row.done) WuSubtle else WuTitle,
+                                textDecoration = if (row.done) TextDecoration.LineThrough else null,
+                                lineHeight = 22.sp,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { editingKey = row.key }
+                            )
                         }
-                        // 删除该行（本次新增的草稿/已确认行可删；来自 board 的已有子任务不提供删除）。
+                        // 删除该行：编辑态下（含已有子任务被点开编辑、或草稿行）右侧出现 ✕。
                         // 用 28dp 的小点击区而非 IconButton（后者固定 48dp，会把行距撑大）
-                        if (row.existing == null) {
+                        if (isEditing) {
                             Icon(
                                 Icons.Outlined.Close,
                                 contentDescription = "删除该子任务行",
