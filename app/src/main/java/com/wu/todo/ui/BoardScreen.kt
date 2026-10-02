@@ -14,6 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,7 +66,6 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Check
@@ -258,7 +258,30 @@ fun BoardScreen(
     if (drawerOpen) {
         BackHandler { drawerOpen = false }
     }
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                // 屏幕左缘向右滑动 → 打开左侧栏（自绘抽屉）
+                val edgePx = 60.dp.toPx()
+                val openPx = 40.dp.toPx()
+                var startX = 0f
+                var acc = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        startX = offset.x
+                        acc = 0f
+                    },
+                    onHorizontalDrag = { change, amount ->
+                        acc += amount
+                        if (!drawerOpen && startX < edgePx && acc > openPx) {
+                            drawerOpen = true
+                        }
+                        change.consume()
+                    }
+                )
+            }
+    ) {
     Scaffold(
         containerColor = WuBackground,
         topBar = {
@@ -299,9 +322,6 @@ fun BoardScreen(
                             imageVector = if (listMode) Icons.Filled.GridView else Icons.Filled.List,
                             contentDescription = if (listMode) "切换到网格总览" else "切换到列表模式"
                         )
-                    }
-                    IconButton(onClick = { viewModel.reload() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "刷新")
                     }
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "更多")
@@ -3099,7 +3119,7 @@ private fun ListSectionBlock(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
                         .clickable { onAddCard() }
-                        .padding(vertical = 14.dp)
+                        .padding(vertical = if (tasks.isEmpty()) 12.dp else 14.dp)
                 ) {
                     Text("+添加卡片", fontSize = 14.sp, color = WuSubtle)
                 }
@@ -3305,7 +3325,7 @@ private fun SectionCard(
         colors = CardDefaults.cardColors(containerColor = WuCard),
         border = BorderStroke(1.dp, Color(0xFFE6E6E6))
     ) {
-        Column(Modifier.padding(horizontal = 18.dp, vertical = 18.dp)) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = if (section.tasks.isEmpty()) 16.dp else 18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
