@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -1926,15 +1927,28 @@ private fun SubtaskSection(
     val rowHeights = remember { mutableMapOf<Long, Float>() }
     var dragKey by remember { mutableStateOf<Long?>(null) }
     var dragDy by remember { mutableFloatStateOf(0f) }
-    // 拖拽中的顺序快照（仅存 key 顺序的状态）；拖拽过程只改它，结束才一次性写回真实数据，
-    // 避免手势回调里实时改真实列表触发重组崩溃——与列内任务拖动用同一套成熟模式
-    var dragOrder by remember { mutableStateOf<List<Long>?>(null) }
+    var dragFrom by remember { mutableStateOf(-1) }
+    var dragTo by remember { mutableStateOf(-1) }
+    // 松手后正在回落到目标槽位的行：保留最后一帧偏移再用动画收敛到 0，避免"落位一跳"
+    var settleKey by remember { mutableStateOf<Long?>(null) }
     // 正在编辑的子任务行 key：点击只读文本即进入编辑态；编辑态下该行显示输入框 + 右侧 ✕。
     // 草稿行（新增且未确认）天然处于编辑态
     var editingKey by remember { mutableStateOf<Long?>(null) }
     // 上一次回车的时间戳：软键盘"完成"与硬件回车可能各回调一次，300ms 内只认第一次，避免连跳两行
     var lastEnterAt by remember { mutableStateOf(0L) }
     val keyboard = LocalSoftwareKeyboardController.current
+    // 固定顺序（拖拽中不变）与最新回调：手势在 pointerInput 协程里执行，用 rememberUpdatedState 取值避免陈旧
+    val order = rows.map { it.key }
+    val orderState = rememberUpdatedState(order)
+    val reorderState = rememberUpdatedState(onReorder)
+    // 正在移动的行（拖动中或松手回落中）的纵向偏移：拖动中 snap 跟随手指保证跟手；
+    // 松手后 tween 收敛回 0（与真实顺序重排发生在同一帧 → 视觉位置无缝衔接）
+    val movingKey = dragKey ?: settleKey
+    val movingDy by animateFloatAsState(
+        targetValue = if (dragKey != null) dragDy else 0f,
+        animationSpec = if (dragKey != null) snap() else tween(durationMillis = 160),
+        label = "movingDy"
+    )
 
     Row(
         verticalAlignment = Alignment.Top,
@@ -1954,11 +1968,11 @@ private fun SubtaskSection(
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            // 拖拽时用快照顺序显示（其他行实时让位）；非拖拽时用原始顺序
-            val displayOrder = dragOrder ?: rows.map { it.key }
             val rowByKey = rows.associateBy { it.key }
-            displayOrder.forEach { key ->
-                val row = rowByKey[key] ?: return@forEach
+            // 整个拖拽过程中顺序保持不变（松手才重排）；被拖行"越过"的行靠 shift 位移让位
+            val dragHeight = rowHeights[dragKey] ?: 0f
+            order.forEachIndexed { index, key ->
+                val row = rowByKey[key] ?: return@forEachIndexed
                 // 回车：完成本条子任务的编辑。
                 // 草稿行（新增未确认）：确认并续加一行；已有子任务：焦点交给下一条（末条则退出编辑）
                 val onEnter: () -> Unit = enter@{
@@ -1966,8 +1980,8 @@ private fun SubtaskSection(
                     val now = System.currentTimeMillis()
                     if (now - lastEnterAt < 300L) return@enter
                     lastEnterAt = now
-                    val i = displayOrder.indexOf(row.key)
-                    val nextKey = if (i in 0 until displayOrder.size - 1) displayOrder[i + 1] else null
+                    val i = order.indexOf(row.key)
+                    val nextKey = if (i in 0 until order.size - 1) order[i + 1] else null
                     if (row.existing == null) {
                         // 草稿行：回车确认并追加下一行（保持连续录入）；空草稿则退出编辑
                         if (row.value.trim().isNotEmpty()) {
@@ -1986,6 +2000,20 @@ private fun SubtaskSection(
                 }
                 key(row.key) {
                     val dragging = dragKey == row.key
+                    // 让位位移：向下拖动时 (dragFrom, dragTo] 的行整体上移一个行高；
+                    // 向上拖动时 [dragTo, dragFrom) 的行整体下移。用动画过渡 → 不再整块瞬移。
+                    val shiftTarget = when {
+                        dragKey == null || dragging -> 0f
+                        dragFrom < dragTo && index > dragFrom && index <= dragTo -> -dragHeight
+                        dragFrom > dragTo && index in dragTo until dragFrom -> dragHeight
+                        else -> 0f
+                    }
+                    val shift by animateFloatAsState(
+                        targetValue = shiftTarget,
+                        // 拖拽中平滑让位；松手瞬间 snap 归零，与真实重排同帧 → 视觉位置不跳
+                        animationSpec = if (dragKey == null) snap() else tween(durationMillis = 150),
+                        label = "shift"
+                    )
                     // 编辑态：用户点击进入的行，或新增且未确认的草稿行（天然可编辑）
                     val isEditing = editingKey == row.key || (row.existing == null && !row.committed)
                     val fr = remember { FocusRequester() }
@@ -1999,12 +2027,15 @@ private fun SubtaskSection(
                             keyboard?.show()
                         }
                     }
+                    // 纵向偏移：被拖行 / 松手回落中的行用 movingDy（拖动中跟手、松手后收敛）；
+                    // 其余行用 shift 平滑让位
+                    val translation = if (dragging || settleKey == row.key) movingDy else shift
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
                             .zIndex(if (dragging) 1f else 0f)
-                            .graphicsLayer { translationY = if (dragging) dragDy else 0f }
+                            .graphicsLayer { translationY = translation }
                             .onGloballyPositioned { c ->
                                 rowHeights[row.key] = c.size.height.toFloat()
                             }
@@ -2120,60 +2151,64 @@ private fun SubtaskSection(
                                     .pointerInput(row.key) {
                                     detectDragGestures(
                                         onDragStart = {
-                                            // 快照当前顺序到可变列表，拖拽中只改它（不碰真实数据）
-                                            dragOrder = rows.map { it.key }.toMutableList()
+                                            val ord = orderState.value
+                                            val from = ord.indexOf(row.key)
+                                            settleKey = null
                                             dragDy = 0f
+                                            dragFrom = from
+                                            dragTo = from
                                             dragKey = row.key
-                                        },
-                                        onDragEnd = {
-                                            val finalOrder = dragOrder
-                                            dragKey = null
-                                            dragDy = 0f
-                                            dragOrder = null
-                                            // 松手才把最终顺序一次性写回真实列表（不在手势回调里实时改，避免重组崩溃）
-                                            if (finalOrder != null) onReorder(finalOrder)
-                                        },
-                                        onDragCancel = {
-                                            dragKey = null
-                                            dragDy = 0f
-                                            dragOrder = null
                                         },
                                         onDrag = { change, amount ->
                                             change.consume()
                                             dragDy += amount.y
-                                            val order =
-                                                (dragOrder as? MutableList<Long>) ?: return@detectDragGestures
-                                            // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
-                                            var guard = 0
-                                            while (guard++ < 30) {
-                                                val i = order.indexOf(row.key)
-                                                if (i < 0) break
-                                                if (dragDy > 0f && i < order.size - 1) {
-                                                    val nh = rowHeights[order[i + 1]] ?: 0f
-                                                    if (nh > 0f && dragDy > nh / 2f) {
-                                                        val tmp = order[i]
-                                                        order[i] = order[i + 1]
-                                                        order[i + 1] = tmp
-                                                        // 重新赋值一份新列表：MutableState 的等值比较会跳过"同引用原地修改"，
-                                                        // 导致不触发重组、其他行不会让位 → 拖动不跟手。换成新列表才能实时重排。
-                                                        dragOrder = ArrayList(order)
-                                                        dragDy -= nh
-                                                        continue
-                                                    }
+                                            val ord = orderState.value
+                                            // 按行高累计推算目标槽位：越过相邻行中线才算换位
+                                            var acc = 0f
+                                            var t = dragFrom
+                                            if (dragDy > 0f) {
+                                                while (t < ord.size - 1) {
+                                                    val h = rowHeights[ord[t + 1]] ?: 0f
+                                                    if (h > 0f && dragDy > acc + h / 2f) {
+                                                        acc += h
+                                                        t++
+                                                    } else break
                                                 }
-                                                if (dragDy < 0f && i > 0) {
-                                                    val ph = rowHeights[order[i - 1]] ?: 0f
-                                                    if (ph > 0f && -dragDy > ph / 2f) {
-                                                        val tmp = order[i]
-                                                        order[i] = order[i - 1]
-                                                        order[i - 1] = tmp
-                                                        dragOrder = ArrayList(order)
-                                                        dragDy += ph
-                                                        continue
-                                                    }
+                                            } else if (dragDy < 0f) {
+                                                while (t > 0) {
+                                                    val h = rowHeights[ord[t - 1]] ?: 0f
+                                                    if (h > 0f && -dragDy > acc + h / 2f) {
+                                                        acc += h
+                                                        t--
+                                                    } else break
                                                 }
-                                                break
                                             }
+                                            dragTo = t
+                                        },
+                                        onDragEnd = {
+                                            val ord = orderState.value
+                                            val from = dragFrom
+                                            val to = dragTo
+                                            dragKey = null
+                                            dragDy = 0f
+                                            dragFrom = -1
+                                            dragTo = -1
+                                            if (from in ord.indices && to in ord.indices && from != to) {
+                                                // 松手才把最终顺序一次性写回真实列表；被拖行标记为"回落中"，
+                                                // 用最后一帧偏移平滑收进目标槽位
+                                                val newOrder = ord.toMutableList().also { it.add(to, it.removeAt(from)) }
+                                                settleKey = row.key
+                                                reorderState.value(newOrder)
+                                            } else {
+                                                settleKey = null
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            dragKey = null
+                                            dragDy = 0f
+                                            dragFrom = -1
+                                            dragTo = -1
+                                            settleKey = null
                                         }
                                     )
                                     },
@@ -2233,17 +2268,35 @@ private fun NoteSection(
     /** 编辑焦点在行间交接（回车跳到下一条）时调用：临时抑制键盘收起关面板的联动 */
     onHandoff: () -> Unit = {}
 ) {
-    // 各行高度（拖动时按"越过相邻行中线即交换"的模型计算），普通 Map 避免重组循环
+    // 各行高度（拖动时按"越过相邻行中线即换位"的模型计算），普通 Map 避免重组循环
     val rowHeights = remember { mutableMapOf<Long, Float>() }
+    // 正在被手指拖动的行；dragFrom/dragTo 是它在"固定顺序"里的起始槽位与当前目标槽位。
+    // 拖拽过程中不改真实列表顺序，只让其他行用动画位移"让位"，松手才一次性写回 ——
+    // 其他行是平滑移动而不是整块瞬移，"拖动时跳动"的问题由此消除。
     var dragKey by remember { mutableStateOf<Long?>(null) }
     var dragDy by remember { mutableFloatStateOf(0f) }
-    var dragOrder by remember { mutableStateOf<List<Long>?>(null) }
+    var dragFrom by remember { mutableStateOf(-1) }
+    var dragTo by remember { mutableStateOf(-1) }
+    // 松手后正在回落到目标槽位的行：保留最后一帧偏移再用动画收敛到 0，避免"落位一跳"
+    var settleKey by remember { mutableStateOf<Long?>(null) }
     // 正在编辑（已聚焦）的 note：编辑态下右侧的 ≡ 拖动手柄变成 ✕ 删除符号，与子任务行为一致
     var editingKey by remember { mutableStateOf<Long?>(null) }
     // 上一次回车的时间戳：软键盘"完成"与硬件回车可能各触发一次回调，
     // 300ms 内只认第一次，避免一次回车连跳两条 note
     var lastEnterAt by remember { mutableStateOf(0L) }
     val keyboard = LocalSoftwareKeyboardController.current
+    // 固定顺序（拖拽中不变）与最新回调：手势在 pointerInput 协程里执行，用 rememberUpdatedState 取值避免陈旧
+    val order = items.map { it.key }
+    val orderState = rememberUpdatedState(order)
+    val reorderState = rememberUpdatedState(onReorder)
+    // 正在移动的行（拖动中或松手回落中）的纵向偏移：拖动中 snap 跟随手指保证跟手；
+    // 松手后 tween 收敛回 0（与真实顺序重排发生在同一帧 → 视觉位置无缝衔接）
+    val movingKey = dragKey ?: settleKey
+    val movingDy by animateFloatAsState(
+        targetValue = if (dragKey != null) dragDy else 0f,
+        animationSpec = if (dragKey != null) snap() else tween(durationMillis = 160),
+        label = "movingDy"
+    )
 
     Row(
         verticalAlignment = Alignment.Top,
@@ -2264,13 +2317,27 @@ private fun NoteSection(
         // 与子任务区的间距保持一致（14dp），保证两个区的图标起点一致
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            // 拖拽时用快照顺序显示（其他行实时让位）；非拖拽时用原始顺序
-            val displayOrder = dragOrder ?: items.map { it.key }
             val itemByKey = items.associateBy { it.key }
-            displayOrder.forEach { key ->
-                val item = itemByKey[key] ?: return@forEach
+            // 整个拖拽过程中顺序保持不变（松手才重排）；被拖行"越过"的行靠 shift 位移让位
+            val dragHeight = rowHeights[dragKey] ?: 0f
+            order.forEachIndexed { index, key ->
+                val item = itemByKey[key] ?: return@forEachIndexed
                 key(item.key) {
                     val dragging = dragKey == item.key
+                    // 让位位移：向下拖动时 (dragFrom, dragTo] 的行整体上移一个行高；
+                    // 向上拖动时 [dragTo, dragFrom) 的行整体下移。用动画过渡 → 不再整块瞬移。
+                    val shiftTarget = when {
+                        dragKey == null || dragging -> 0f
+                        dragFrom < dragTo && index > dragFrom && index <= dragTo -> -dragHeight
+                        dragFrom > dragTo && index in dragTo until dragFrom -> dragHeight
+                        else -> 0f
+                    }
+                    val shift by animateFloatAsState(
+                        targetValue = shiftTarget,
+                        // 拖拽中平滑让位；松手瞬间 snap 归零，与真实重排同帧 → 视觉位置不跳
+                        animationSpec = if (dragKey == null) snap() else tween(durationMillis = 150),
+                        label = "shift"
+                    )
                     // 编辑态：用户点击进入的备注行，或新增且未确认的草稿备注（天然可编辑）
                     val isEditing = editingKey == item.key || !item.committed
                     // 进入编辑态即聚焦：fr 只在编辑态（BasicTextField 存在）时才绑定，避免崩溃
@@ -2282,12 +2349,15 @@ private fun NoteSection(
                             keyboard?.show()
                         }
                     }
+                    // 纵向偏移：被拖行 / 松手回落中的行用 movingDy（拖动中跟手、松手后收敛）；
+                    // 其余行用 shift 平滑让位
+                    val translation = if (dragging || settleKey == item.key) movingDy else shift
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
                             .zIndex(if (dragging) 1f else 0f)
-                            .graphicsLayer { translationY = if (dragging) dragDy else 0f }
+                            .graphicsLayer { translationY = translation }
                             .onGloballyPositioned { c ->
                                 rowHeights[item.key] = c.size.height.toFloat()
                             }
@@ -2307,8 +2377,8 @@ private fun NoteSection(
                                 item.value = item.value.trim()
                                 item.committed = true
                             }
-                            val i = displayOrder.indexOf(item.key)
-                            val nextKey = if (i in 0 until displayOrder.size - 1) displayOrder[i + 1] else null
+                            val i = order.indexOf(item.key)
+                            val nextKey = if (i in 0 until order.size - 1) order[i + 1] else null
                             if (nextKey != null) {
                                 onHandoff()
                                 editingKey = nextKey
@@ -2400,60 +2470,64 @@ private fun NoteSection(
                                     .pointerInput(item.key) {
                                     detectDragGestures(
                                         onDragStart = {
-                                            // 快照当前顺序到可变列表，拖拽中只改它（不碰真实数据）
-                                            dragOrder = items.map { it.key }.toMutableList()
+                                            val ord = orderState.value
+                                            val from = ord.indexOf(item.key)
+                                            settleKey = null
                                             dragDy = 0f
+                                            dragFrom = from
+                                            dragTo = from
                                             dragKey = item.key
-                                        },
-                                        onDragEnd = {
-                                            val finalOrder = dragOrder
-                                            dragKey = null
-                                            dragDy = 0f
-                                            dragOrder = null
-                                            // 松手才把最终顺序一次性写回真实列表
-                                            if (finalOrder != null) onReorder(finalOrder)
-                                        },
-                                        onDragCancel = {
-                                            dragKey = null
-                                            dragDy = 0f
-                                            dragOrder = null
                                         },
                                         onDrag = { change, amount ->
                                             change.consume()
                                             dragDy += amount.y
-                                            val order =
-                                                (dragOrder as? MutableList<Long>) ?: return@detectDragGestures
-                                            // 越过相邻行中线即与相邻行交换，并补偿偏移保持跟手
-                                            var guard = 0
-                                            while (guard++ < 30) {
-                                                val i = order.indexOf(item.key)
-                                                if (i < 0) break
-                                                if (dragDy > 0f && i < order.size - 1) {
-                                                    val nh = rowHeights[order[i + 1]] ?: 0f
-                                                    if (nh > 0f && dragDy > nh / 2f) {
-                                                        val tmp = order[i]
-                                                        order[i] = order[i + 1]
-                                                        order[i + 1] = tmp
-                                                        // 重新赋值一份新列表：MutableState 的等值比较会跳过"同引用原地修改"，
-                                                        // 导致不触发重组、其他行不会让位 → 拖动不跟手。换成新列表才能实时重排。
-                                                        dragOrder = ArrayList(order)
-                                                        dragDy -= nh
-                                                        continue
-                                                    }
+                                            val ord = orderState.value
+                                            // 按行高累计推算目标槽位：越过相邻行中线才算换位
+                                            var acc = 0f
+                                            var t = dragFrom
+                                            if (dragDy > 0f) {
+                                                while (t < ord.size - 1) {
+                                                    val h = rowHeights[ord[t + 1]] ?: 0f
+                                                    if (h > 0f && dragDy > acc + h / 2f) {
+                                                        acc += h
+                                                        t++
+                                                    } else break
                                                 }
-                                                if (dragDy < 0f && i > 0) {
-                                                    val ph = rowHeights[order[i - 1]] ?: 0f
-                                                    if (ph > 0f && -dragDy > ph / 2f) {
-                                                        val tmp = order[i]
-                                                        order[i] = order[i - 1]
-                                                        order[i - 1] = tmp
-                                                        dragOrder = ArrayList(order)
-                                                        dragDy += ph
-                                                        continue
-                                                    }
+                                            } else if (dragDy < 0f) {
+                                                while (t > 0) {
+                                                    val h = rowHeights[ord[t - 1]] ?: 0f
+                                                    if (h > 0f && -dragDy > acc + h / 2f) {
+                                                        acc += h
+                                                        t--
+                                                    } else break
                                                 }
-                                                break
                                             }
+                                            dragTo = t
+                                        },
+                                        onDragEnd = {
+                                            val ord = orderState.value
+                                            val from = dragFrom
+                                            val to = dragTo
+                                            dragKey = null
+                                            dragDy = 0f
+                                            dragFrom = -1
+                                            dragTo = -1
+                                            if (from in ord.indices && to in ord.indices && from != to) {
+                                                // 松手才把最终顺序一次性写回真实列表；被拖行标记为"回落中"，
+                                                // 用最后一帧偏移平滑收进目标槽位
+                                                val newOrder = ord.toMutableList().also { it.add(to, it.removeAt(from)) }
+                                                settleKey = item.key
+                                                reorderState.value(newOrder)
+                                            } else {
+                                                settleKey = null
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            dragKey = null
+                                            dragDy = 0f
+                                            dragFrom = -1
+                                            dragTo = -1
+                                            settleKey = null
                                         }
                                     )
                                     },
@@ -2469,27 +2543,27 @@ private fun NoteSection(
                         }
                     }
                 }
-                // 备注区底部「+」按钮：每点一次在末尾追加一条空备注并进入编辑（与子任务区一致）
-                Row(
+            }
+            // 备注区底部「+」按钮：整区只在最后一条 note 下方有一个（点一次在末尾追加一条空备注并进入编辑）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp, bottom = 10.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 2.dp, bottom = 10.dp)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(WuBackground)
+                        .clickable { onAdd() }
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(WuBackground)
-                            .clickable { onAdd() }
-                    ) {
-                        Icon(
-                            Icons.Filled.Add,
-                            contentDescription = "添加备注",
-                            tint = WuTitle,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = "添加备注",
+                        tint = WuTitle,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
