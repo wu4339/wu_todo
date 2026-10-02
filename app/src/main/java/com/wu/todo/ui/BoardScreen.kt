@@ -85,7 +85,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -95,7 +94,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -107,7 +105,6 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
@@ -190,6 +187,7 @@ private fun String.toSingleLineTaskText(): String =
 fun BoardScreen(
     viewModel: BoardViewModel,
     onOpenFile: () -> Unit,
+    onAddFile: () -> Unit,
     onOpenFolder: () -> Unit
 ) {
     val state by viewModel.state
@@ -197,8 +195,9 @@ fun BoardScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     // 当前打开的看板列（null 表示在看板总览）
     var openedSectionKey by remember { mutableStateOf<String?>(null) }
-    // 左侧栏（文件抽屉）
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    // 左侧栏（文件抽屉）：用受控布尔 + 自绘抽屉，避免 Material3 ModalNavigationDrawer 在 1.2.x
+    // 关闭后主界面无法响应触摸/按键的已知问题（关闭后残留 scrim 拦截事件）
+    var drawerOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     // 新建任务列表的底部编辑页
     var showListSheet by remember { mutableStateOf(false) }
@@ -254,29 +253,12 @@ fun BoardScreen(
         return
     }
 
-    // 抽屉打开时：系统返回（侧滑返回）先关闭抽屉，而不是退出应用
-    if (drawerState.isOpen) {
-        BackHandler { scope.launch { drawerState.close() } }
+    // 自定义抽屉：受控 Box + 仅在打开时组合的 scrim，关闭后没有任何拦截层残留，
+    // 从而根治「打开再关闭侧栏后主界面不响应触摸/按键」的问题。
+    if (drawerOpen) {
+        BackHandler { drawerOpen = false }
     }
-
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            BoardDrawerContent(
-                files = state.drawerFiles,
-                currentUri = state.fileUri,
-                onPick = { uri ->
-                    openedSectionKey = null
-                    viewModel.chooseFolderFile(uri)
-                    scope.launch { drawerState.close() }
-                },
-                onOpenFolder = {
-                    scope.launch { drawerState.close() }
-                    onOpenFolder()
-                }
-            )
-        }
-    ) {
+    Box(Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = WuBackground,
         topBar = {
@@ -289,7 +271,7 @@ fun BoardScreen(
                     actionIconContentColor = WuTitle
                 ),
                 navigationIcon = {
-                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                    IconButton(onClick = { drawerOpen = true }) {
                         Icon(Icons.Filled.Menu, contentDescription = "打开文件列表")
                     }
                 },
@@ -346,11 +328,11 @@ fun BoardScreen(
                             )
                         }
                         DropdownMenuItem(
-                            text = { Text("打开 .md 文件") },
-                            onClick = { menuExpanded = false; onOpenFile() }
+                            text = { Text("添加 md 文件") },
+                            onClick = { menuExpanded = false; onAddFile() }
                         )
                         DropdownMenuItem(
-                            text = { Text("选择看板文件夹") },
+                            text = { Text("添加看板路径") },
                             onClick = { menuExpanded = false; onOpenFolder() }
                         )
                         DropdownMenuItem(
@@ -498,6 +480,47 @@ fun BoardScreen(
                     }
                 }
             }
+        }
+    }
+    // 抽屉遮罩：仅在打开时组合，关闭后立即移除，绝不残留拦截层
+    if (drawerOpen) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.32f))
+                .clickable { drawerOpen = false }
+                .zIndex(20f)
+        )
+    }
+    // 抽屉面板：打开时滑入（offset 0），关闭时滑出屏幕外；动画结束（offset 回到 -360dp）即移出组合
+    val sheetOffset by animateDpAsState(
+        targetValue = if (drawerOpen) 0.dp else (-360).dp,
+        animationSpec = tween(durationMillis = 280),
+        label = "drawerOffset"
+    )
+    if (drawerOpen || sheetOffset != (-360).dp) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(320.dp)
+                .offset(x = sheetOffset)
+                .background(WuCard)
+                .zIndex(21f)
+                .clickable { }
+        ) {
+            BoardDrawerContent(
+                files = state.drawerFiles,
+                currentUri = state.fileUri,
+                onPick = { uri ->
+                    openedSectionKey = null
+                    viewModel.chooseFolderFile(uri)
+                    drawerOpen = false
+                },
+                onOpenFolder = {
+                    drawerOpen = false
+                    onOpenFolder()
+                }
+            )
         }
     }
     }
@@ -3431,7 +3454,7 @@ private fun BoardDrawerContent(
             Spacer(Modifier.height(14.dp))
             if (files.isEmpty()) {
                 Text(
-                    "尚未选择文件夹\n\n点下方按钮选择看板文件夹，\n其中所有 .md 文件会列在这里",
+                    "尚未选择文件夹\n\n点下方按钮添加看板路径，\n其中所有 .md 文件会列在这里",
                     fontSize = 13.sp,
                     color = WuSubtle
                 )
@@ -3480,7 +3503,7 @@ private fun BoardDrawerContent(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("选择看板文件夹", fontSize = 13.sp, color = WuSubtle)
+                Text("添加看板路径", fontSize = 13.sp, color = WuSubtle)
             }
         }
     }

@@ -44,39 +44,78 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     /** 对外暴露为 MutableState，Compose 里用 `by` 委托即可观察 */
     val state: MutableState<BoardUiState> = mutableStateOf(BoardUiState())
 
+    private val FOLDER_PREFS_KEY = "board_paths"   // 已添加的「看板路径」（文件夹树）集合
+    private val FILE_PREFS_KEY = "extra_files"      // 单独添加的 .md 文件集合（name|uri）
+
+    // 已添加的看板路径（文件夹树 URI）与单独添加的 md 文件，二者共同决定左侧栏文件列表
+    private var savedFolders: MutableSet<String> =
+        (prefs.getStringSet(FOLDER_PREFS_KEY, emptySet()) ?: emptySet()).toMutableSet()
+    private var savedFiles: MutableList<FolderFile> = run {
+        (prefs.getStringSet(FILE_PREFS_KEY, emptySet()) ?: emptySet())
+            .mapNotNull { entry ->
+                val i = entry.indexOf('|')
+                if (i <= 0) null else FolderFile(entry.substring(0, i), Uri.parse(entry.substring(i + 1)))
+            }.toMutableList()
+    }
+
     init {
-        // 恢复上次的看板文件夹（用于填满左侧抽屉文件列表），再恢复上次打开的具体文件。
-        // 顺序：先文件夹后文件，保证最终打开的是用户最后停留的那个文件。
-        val folderSaved = prefs.getString("last_folder", null)
+        // 恢复已添加的看板路径与独立 md 文件，重填左侧抽屉文件列表；再恢复上次打开的具体文件
+        rebuildDrawer()
         val fileSaved = prefs.getString("last_uri", null)
-        if (folderSaved != null) {
-            runCatching { openFolder(Uri.parse(folderSaved)) }
-        }
         if (fileSaved != null) {
             runCatching { openFile(Uri.parse(fileSaved)) }
         }
     }
 
+    /** 根据「看板路径 + 独立 md 文件」重算左侧栏文件列表（按 uri 去重、按名称排序） */
+    private fun rebuildDrawer() {
+        val files = mutableListOf<FolderFile>()
+        for (folder in savedFolders) {
+            runCatching { repo.listMarkdownInTree(Uri.parse(folder)) }
+                .getOrDefault(emptyList())
+                .forEach { (name, uri) -> files.add(FolderFile(name, uri)) }
+        }
+        files.addAll(savedFiles)
+        val deduped = files.distinctBy { it.uri.toString() }.sortedBy { it.name.lowercase() }
+        update { copy(drawerFiles = deduped) }
+    }
+
+    /** 打开单个 .md 文件（设为当前看板），并把它登记进左侧栏 */
     fun openFile(uri: Uri) {
         takePersistable(uri)
+        addExtraFile(uri)   // 打开过的文件也出现在左侧栏
         loadFrom(uri)
     }
 
-    fun openFolder(uri: Uri) {
+    /** 添加「看板路径」：扫描该文件夹树下的全部 .md 文件并加入左侧栏（不改当前打开的看板） */
+    fun addBoardPath(uri: Uri) {
         takePersistable(uri)
-        // 记住选中的看板文件夹，重启后据此重填左侧抽屉文件列表（仅本机持久化，不写回 .md）
-        prefs.edit().putString("last_folder", uri.toString()).apply()
-        val files = runCatching { repo.listMarkdownInTree(uri) }.getOrDefault(emptyList())
-        if (files.isEmpty()) {
-            update { copy(message = "该文件夹下没有找到 .md 文件") }
-            return
+        savedFolders.add(uri.toString())
+        prefs.edit().putStringSet(FOLDER_PREFS_KEY, savedFolders.toSet()).apply()
+        rebuildDrawer()
+        // 若当前还没有打开任何看板，则自动打开该路径下的第一个文件
+        if (state.value.fileUri == null) {
+            runCatching { repo.listMarkdownInTree(uri) }
+                .getOrDefault(emptyList()).firstOrNull()?.second?.let { openFile(it) }
         }
-        // 文件夹内所有 md 文件放入左侧栏；当前文件不在其中时自动打开第一个
-        val uris = files.map { it.second }
-        update { copy(drawerFiles = files.map { FolderFile(it.first, it.second) }) }
-        if (state.value.fileUri !in uris) {
-            openFile(files.first().second)
-        }
+    }
+
+    /** 添加单个 .md 文件到左侧栏（不切换当前看板） */
+    fun addMdFile(uri: Uri) {
+        takePersistable(uri)
+        addExtraFile(uri)
+        rebuildDrawer()
+    }
+
+    /** 把某个 md 文件登记进「独立文件」集合并持久化（去重、置顶） */
+    private fun addExtraFile(uri: Uri) {
+        val name = repo.displayName(uri) ?: uri.lastPathSegment ?: "看板"
+        savedFiles.removeAll { it.uri == uri }
+        savedFiles.add(0, FolderFile(name, uri))
+        prefs.edit().putStringSet(
+            FILE_PREFS_KEY,
+            savedFiles.map { "${it.name}|${it.uri}" }.toSet()
+        ).apply()
     }
 
     fun chooseFolderFile(uri: Uri) {

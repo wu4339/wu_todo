@@ -20,7 +20,11 @@ class MainActivity : ComponentActivity() {
 
     private val openFolderLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
-    ) { uri -> uri?.let { viewModel.openFolder(it) } }
+    ) { uri -> uri?.let { viewModel.addBoardPath(it) } }
+
+    private val addFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { viewModel.addMdFile(it) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,6 +41,11 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     onOpenFile = {
                         openFileLauncher.launch(
+                            arrayOf("text/markdown", "text/plain", "application/octet-stream", "*/*")
+                        )
+                    },
+                    onAddFile = {
+                        addFileLauncher.launch(
                             arrayOf("text/markdown", "text/plain", "application/octet-stream", "*/*")
                         )
                     },
