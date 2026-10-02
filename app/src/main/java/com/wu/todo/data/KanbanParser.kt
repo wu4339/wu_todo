@@ -29,10 +29,11 @@ data class KanbanTask(
     /** 缩进层级（一个 tab 记为 4 级），用于子任务缩进显示 */
     val indent: Int,
     /**
-     * 任务备注：任务行下方的缩进行（Obsidian Kanban 卡片 note），多行以换行拼接。
-     * 文件里写作缩进的无序列表项（`- 内容`），读取时已剥掉 `- ` 前缀，故这里存的是纯文本。
+     * 任务备注：任务行下方的缩进行（Obsidian Kanban 卡片 note）。
+     * 支持多条备注——文件里每条写作独立的缩进无序列表项（`- 内容`），读取时已剥掉 `- ` 前缀，
+     * 故这里存的是纯文本列表，每个元素对应一条备注。
      */
-    val note: String = ""
+    val notes: List<String> = emptyList()
 )
 
 data class KanbanSection(
@@ -148,7 +149,8 @@ object KanbanParser {
                 return@forEachIndexed
             }
 
-            // 任务行下方的缩进普通文本行 → 该任务的备注（遇到空行/顶格行结束）
+            // 任务行下方的缩进普通文本行 → 该任务的备注（遇到空行/顶格行结束）。
+            // 每条缩进行作为独立的一条备注，支持一个任务挂多条 note。
             if (current != null && noteTargetId != null) {
                 val lastTask = current!!.tasks.lastOrNull { it.id == noteTargetId }
                 if (lastTask != null && line.isNotBlank() &&
@@ -158,9 +160,7 @@ object KanbanParser {
                     // 备注行两种写法都接受：`- 内容`（无序列表项，写入用的格式）与缩进纯文本（旧格式）。
                     // 读取时统一去掉列表符号，保证 note 文本与写入格式一一对应、往返不叠加前缀
                     val content = t.replace(NOTE_BULLET_RE, "")
-                    // 多行备注保留换行（原先用空格拼接，多行 note 往返会丢掉换行）
-                    val merged = if (lastTask.note.isEmpty()) content else lastTask.note + "\n" + content
-                    current!!.tasks[i] = lastTask.copy(note = merged)
+                    current!!.tasks[i] = lastTask.copy(notes = lastTask.notes + content)
                     return@forEachIndexed
                 }
                 noteTargetId = null
@@ -394,18 +394,18 @@ object KanbanParser {
         l.isNotBlank() && (l.startsWith(" ") || l.startsWith("\t")) && TASK_RE.find(l) == null
 
     /**
-     * 设置任务备注：先清除任务行正下方已有备注行；text 非空时插入新备注行。
+     * 设置任务备注：先清除任务行正下方已有备注行；texts 非空时逐条插入新备注行（每条独立一行）。
      *
      * 写入格式为**缩进的无序列表项**（与子任务同级缩进、排在子任务之前）：
      * ```
      * - [ ] 任务1
-     *     - note 内容
-     *     - note 第二行
+     *     - note 一
+     *     - note 二
      *     - [ ] 子任务
      * ```
      * 读取时（NOTE_BULLET_RE）会把 `- ` 前缀剥掉，保证多次保存不叠加前缀。
      */
-    fun setNote(lines: List<String>, task: KanbanTask, text: String): List<String> {
+    fun setNotes(lines: List<String>, task: KanbanTask, texts: List<String>): List<String> {
         val idx = task.lineIndex
         if (idx !in lines.indices) return lines
         if (TASK_RE.find(lines[idx]) == null) return lines
@@ -414,14 +414,13 @@ object KanbanParser {
         while (i < result.size && isNoteLine(result[i])) {
             result.removeAt(i)
         }
-        if (text.isNotBlank()) {
+        // 仅保留非空项并 trim，与读取后存储的 notes 对齐
+        val kept = texts.map { it.trim() }.filter { it.isNotEmpty() }
+        if (kept.isNotEmpty()) {
             // 与子任务同级缩进（任务行缩进 + 4 空格），紧跟任务行、位于子任务之前
             val indent = lines[idx].takeWhile { it == ' ' || it == '\t' } + "    "
-            // 多行备注：逐行写入为独立的无序列表项
-            val noteLines = text.trim().lines()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .map { "$indent- $it" }
+            // 每条备注独立写成一个无序列表项
+            val noteLines = kept.map { "$indent- $it" }
             result.addAll(idx + 1, noteLines)
         }
         return result

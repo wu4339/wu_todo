@@ -245,13 +245,15 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
-    /** 设置任务备注（任务行下方的缩进普通文本行）并写回 .md，text 为空则清除备注 */
-    fun setNote(task: KanbanTask, text: String) {
+    /** 设置任务备注（任务行下方的缩进普通文本行）并写回 .md，texts 为空则清除备注 */
+    fun setNotes(task: KanbanTask, texts: List<String>) {
         val cur = state.value
         val uri = cur.fileUri ?: return
-        if (text.trim() == task.note) return
+        // 仅保留非空项并 trim，与解析后存储的 notes 对齐后再比较，避免无意义的写回
+        val cleaned = texts.map { it.trim() }.filter { it.isNotEmpty() }
+        if (cleaned == task.notes) return
 
-        val newLines = KanbanParser.setNote(cur.lines, task, text)
+        val newLines = KanbanParser.setNotes(cur.lines, task, cleaned)
         val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
         update { copy(lines = newLines, sections = board.sections) }
 

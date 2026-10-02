@@ -240,7 +240,7 @@ fun BoardScreen(
             onRenameTask = viewModel::renameTask,
             onMoveTask = { task, target -> viewModel.moveTask(task, target, openedSection) },
             onSetSubtasks = viewModel::replaceSubtasks,
-            onSetNote = viewModel::setNote,
+            onSetNote = viewModel::setNotes,
             onDeleteList = { viewModel.deleteSection(openedSection) },
             onSetAllDone = { done -> viewModel.setAllTasks(openedSection, done) },
             onDeleteCompleted = { viewModel.deleteCompletedTasks(openedSection) },
@@ -544,7 +544,7 @@ fun BoardScreen(
                 onRenameTask = viewModel::renameTask,
                 onMoveTask = { task, target -> viewModel.moveTask(task, target, sec) },
                 onSetSubtasks = viewModel::replaceSubtasks,
-                onSetNote = viewModel::setNote,
+                onSetNote = viewModel::setNotes,
                 onDelete = { task ->
                     viewModel.delete(task)
                     listTaskRef = null
@@ -582,7 +582,7 @@ private fun SectionDetailScreen(
     onRenameTask: (KanbanTask, String) -> Unit,
     onMoveTask: (KanbanTask, KanbanSection) -> Unit,
     onSetSubtasks: (KanbanTask, List<Pair<String, Boolean>>) -> Unit,
-    onSetNote: (KanbanTask, String) -> Unit,
+    onSetNote: (KanbanTask, List<String>) -> Unit,
     onDeleteList: () -> Unit,
     onSetAllDone: (Boolean) -> Unit,
     onDeleteCompleted: () -> Unit,
@@ -1440,7 +1440,7 @@ private fun TaskEditSheet(
     onMoveTask: (KanbanTask, KanbanSection) -> Unit,
     onSetSubtasks: (KanbanTask, List<Pair<String, Boolean>>) -> Unit,
     onDelete: (KanbanTask) -> Unit,
-    onSetNote: (KanbanTask, String) -> Unit,
+    onSetNote: (KanbanTask, List<String>) -> Unit,
     onSetDotColor: (Int) -> Unit
 ) {
     var text by remember(task.id) { mutableStateOf(task.text) }
@@ -1462,10 +1462,25 @@ private fun TaskEditSheet(
     // 否则会误判成"需要自动聚焦某行"，对没有输入框的只读行调用未绑定的 FocusRequester → 崩溃。
     var subKeySeq by remember(task.id) { mutableStateOf(0L) }
     var autoFocusDraftKey by remember(task.id) { mutableStateOf(0L) }
-    var noteText by remember(task.id) { mutableStateOf(task.note) }
     val textFocus = remember { FocusRequester() }
-    val noteFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+
+    // 多条备注：每条独立成行，可增删改；key 与子任务同套规则（已有负数 / 新增正数），永不与子任务撞 key
+    val noteItems = remember(task.id) {
+        mutableStateListOf<NoteItem>().apply {
+            task.notes.forEachIndexed { i, n -> add(NoteItem(-(i + 1).toLong(), n)) }
+        }
+    }
+    var noteSeq by remember(task.id) { mutableStateOf(0L) }
+    var autoFocusNoteKey by remember(task.id) { mutableStateOf(0L) }
+    val addNote: () -> Unit = {
+        noteSeq += 1
+        val item = NoteItem(noteSeq, "")
+        noteItems.add(item)
+        autoFocusNoteKey = item.key
+    }
+    val removeNote: (NoteItem) -> Unit = { noteItems.remove(it) }
+    val flushNotes: () -> Unit = { onSetNote(task, noteItems.map { it.value.trim() }) }
 
     // 追加一行空草稿并自动聚焦
     val addDraft: () -> Unit = {
@@ -1501,62 +1516,59 @@ private fun TaskEditSheet(
         }
     }
 
-    // 备注（note）行：写入 md 时是缩进的无序列表项（`- 内容`），排在子任务之前。
-    // 有内容时（或正在编辑时）常驻显示，避免"保存后看不见、以为没加上"。
-    val noteRow: @Composable () -> Unit = {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(vertical = 6.dp)
-        ) {
-            Icon(
-                Icons.Outlined.Notes,
-                contentDescription = null,
-                tint = WuSubtle,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(14.dp))
-            BasicTextField(
-                value = noteText,
-                onValueChange = { noteText = it },
-                textStyle = TextStyle(fontSize = 15.sp, color = WuTitle, lineHeight = 22.sp),
-                // 多行：备注可换行，最多 5 行后框内滚动
-                singleLine = false,
-                maxLines = 5,
-                cursorBrush = SolidColor(WuAccent),
+    // 多条备注：每条独立一行（图标 + 可编辑文本 + 删除 ✕），支持增删。
+    // 写回 md 时每条是独立的缩进无序列表项（`- 内容`），排在子任务之前，与文件结构一致。
+    val noteRows: @Composable () -> Unit = {
+        noteItems.forEach { item ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(noteFocus),
-                decorationBox = { inner ->
-                    Box {
-                        if (noteText.isEmpty()) {
-                            Text("Note", color = WuSubtle, fontSize = 15.sp, lineHeight = 22.sp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(vertical = 6.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Notes,
+                    contentDescription = null,
+                    tint = WuSubtle,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(14.dp))
+                BasicTextField(
+                    value = item.value,
+                    onValueChange = { item.value = it },
+                    textStyle = TextStyle(fontSize = 15.sp, color = WuTitle, lineHeight = 22.sp),
+                    // 多行：备注可换行，最多 5 行后框内滚动
+                    singleLine = false,
+                    maxLines = 5,
+                    cursorBrush = SolidColor(WuAccent),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(item.fr),
+                    decorationBox = { inner ->
+                        Box {
+                            if (item.value.isEmpty()) {
+                                Text("Note", color = WuSubtle, fontSize = 15.sp, lineHeight = 22.sp)
+                            }
+                            inner()
                         }
-                        inner()
                     }
-                }
-            )
-            Spacer(Modifier.width(8.dp))
-            // ✕：保存备注并收起输入态（内容清空后保存即删除该备注）
-            Icon(
-                Icons.Outlined.Close,
-                contentDescription = "保存备注并收起",
-                tint = WuSubtle,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable {
-                        onSetNote(task, noteText)
-                        addItemState = 0
-                    }
-                    .padding(3.dp)
-                    .size(20.dp)
-            )
+                )
+                Spacer(Modifier.width(8.dp))
+                // ✕：删除该条备注（内容清空后保存即移除）
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "删除该备注",
+                    tint = WuSubtle,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { removeNote(item) }
+                        .padding(3.dp)
+                        .size(20.dp)
+                )
+            }
         }
     }
-    // 面板关闭 / 点保存时把备注落盘（内容没变时 ViewModel 会跳过写入）
-    val flushNote: () -> Unit = { onSetNote(task, noteText) }
 
     // 打开选择面板时收起键盘（面板落到底部）；从面板回来后恢复输入焦点（首次打开面板不弹键盘）
     var movePanelOpened by remember(task.id) { mutableStateOf(false) }
@@ -1569,10 +1581,13 @@ private fun TaskEditSheet(
         }
     }
 
-    // 选 Note 后：光标自动聚焦到备注输入框（持续抢焦点，覆盖面板初始拉焦循环）
-    LaunchedEffect(addItemState) {
-        when (addItemState) {
-            2 -> repeat(45) { runCatching { noteFocus.requestFocus() }; delay(16) }
+    // 新增备注后：光标自动聚焦到对应输入框（持续抢焦点，覆盖面板初始拉焦循环）
+    LaunchedEffect(autoFocusNoteKey) {
+        if (autoFocusNoteKey != 0L) {
+            repeat(45) {
+                noteItems.firstOrNull { it.key == autoFocusNoteKey }?.fr?.let { runCatching { it.requestFocus() } }
+                delay(16)
+            }
         }
     }
 
@@ -1580,7 +1595,7 @@ private fun TaskEditSheet(
     // contentPadding = 0：分割线需要通栏（左边缘到右边缘），水平内边距由各行自己控制
     KeyboardSheet(
         // 关闭面板前先把子任务列表落盘，避免输入内容丢失
-        onDismiss = { flushNote(); flushSubs(); onDismiss() },
+        onDismiss = { flushNotes(); flushSubs(); onDismiss() },
         focus = textFocus,
         imeAutoClose = !moveSheetOpen,
         contentPadding = PaddingValues(0.dp),
@@ -1713,9 +1728,9 @@ private fun TaskEditSheet(
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
                 ) {
-                // 备注行：md 中写在任务行下方（`- 内容`），位置在子任务之前，与看板文件结构一致
-                if (noteText.isNotBlank() || addItemState == 2) {
-                    noteRow()
+                // 备注区：md 中写在任务行下方（`- 内容`），位置在子任务之前，与看板文件结构一致
+                if (noteItems.isNotEmpty()) {
+                    noteRows()
                     HorizontalDivider(color = WuDivider, thickness = 1.dp)
                 }
                 // 子任务区：已有子任务 + 新增草稿行（统一列表，可拖动排序）+「Add subtasks」按钮
@@ -1755,8 +1770,8 @@ private fun TaskEditSheet(
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(WuBackground)
                                     .clickable {
-                                        noteText = task.note
-                                        addItemState = 2
+                                        addNote()
+                                        addItemState = 0
                                     }
                                     .padding(horizontal = 14.dp, vertical = 12.dp)
                             ) {
@@ -1802,7 +1817,7 @@ private fun TaskEditSheet(
                     onClick = {
                         onRenameTask(task, text.toSingleLineTaskText())
                         // 保存前先把备注与子任务列表落盘
-                        flushNote()
+                        flushNotes()
                         flushSubs()
                         onDismiss()
                     },
@@ -1836,6 +1851,15 @@ private class SubRow(
     // 子任务勾选状态：已有子任务取 board 中的值；新增草稿默认未完成。
     // 改动只在面板内即时生效，点保存/关闭时才随 flushSubs 整块写回 .md。
     var done by mutableStateOf(done)
+}
+
+/** 一条备注：与子任务同套 key 规则（已有负数 / 新增正数），各自持有 FocusRequester 便于新增后自动聚焦 */
+private class NoteItem(
+    val key: Long,
+    value: String
+) {
+    var value by mutableStateOf(value)
+    val fr = FocusRequester()
 }
 
 /** 取某任务正下方紧邻的缩进子任务行（board 中 indent 大于父任务的任务即其子任务） */
@@ -2283,9 +2307,10 @@ private fun DetailTaskRow(
                 lineHeight = 19.sp
             )
         }
-        if (task.note.isNotBlank()) {
+        val noteStr = task.notes.joinToString("\n")
+        if (noteStr.isNotBlank()) {
             Text(
-                text = task.note,
+                text = noteStr,
                 fontSize = 12.sp,
                 color = WuSubtle,
                 lineHeight = 16.sp,
@@ -2385,9 +2410,10 @@ private fun CompletedTaskRow(
                 )
             }
         }
-        if (task.note.isNotBlank()) {
+        val noteStr = task.notes.joinToString("\n")
+        if (noteStr.isNotBlank()) {
             Text(
-                text = task.note,
+                text = noteStr,
                 fontSize = 12.sp,
                 color = WuDoneGrey.copy(alpha = 0.75f),
                 lineHeight = 16.sp,
