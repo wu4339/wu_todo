@@ -212,12 +212,18 @@ fun BoardScreen(
     var listEditKey by remember { mutableStateOf<String?>(null) }
     // 列表模式下打开的任务编辑页：列 key + 任务行号（用行号而非对象，避免数据刷新后引用过期）
     var listTaskRef by remember { mutableStateOf<Pair<String, Int>?>(null) }
-    // 列表模式默认折叠所有列：首次加载到列后统一折叠一次（之后用户手动展开/折叠仍生效，不被覆盖）
-    var listCollapsedInit by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(state.sections) {
-        if (!listCollapsedInit && state.sections.isNotEmpty()) {
-            collapsedTitles = state.sections.map { it.title }
-            listCollapsedInit = true
+    // 列表模式默认折叠所有列：每次"进入列表模式"都重新默认折叠一次；
+    // 列表模式内的数据刷新不会重置用户已手动展开/折叠的状态。
+    var collapsedSeededForList by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(listMode, state.sections) {
+        if (listMode && state.sections.isNotEmpty()) {
+            if (!collapsedSeededForList) {
+                collapsedTitles = state.sections.map { it.title }
+                collapsedSeededForList = true
+            }
+        } else if (!listMode) {
+            // 切回网格后，下次再进入列表模式重新默认折叠
+            collapsedSeededForList = false
         }
     }
 
@@ -3221,8 +3227,9 @@ private fun ListTaskCard(
                 }
             }
         }
-            // 子任务计数：有子任务时在卡片底部显示「图标 + 已完成/总数」
-            if (subtaskTotal > 0) {
+            // 卡片底部计数：子任务「已完成/总数」；其后若有 note 则追加 note 个数
+            val noteCount = task.notes.size
+            if (subtaskTotal > 0 || noteCount > 0) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -3230,19 +3237,37 @@ private fun ListTaskCard(
                         .padding(start = 40.dp, end = 14.dp)
                         .padding(bottom = 10.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.FormatListBulleted,
-                        contentDescription = null,
-                        tint = WuSubtle,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "$subtaskDone/$subtaskTotal",
-                        fontSize = 12.sp,
-                        color = WuSubtle,
-                        lineHeight = 14.sp
-                    )
+                    if (subtaskTotal > 0) {
+                        Icon(
+                            imageVector = Icons.Outlined.FormatListBulleted,
+                            contentDescription = null,
+                            tint = WuSubtle,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "$subtaskDone/$subtaskTotal",
+                            fontSize = 12.sp,
+                            color = WuSubtle,
+                            lineHeight = 14.sp
+                        )
+                        if (noteCount > 0) Spacer(Modifier.width(12.dp))
+                    }
+                    if (noteCount > 0) {
+                        Icon(
+                            imageVector = Icons.Outlined.Notes,
+                            contentDescription = null,
+                            tint = WuSubtle,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "$noteCount",
+                            fontSize = 12.sp,
+                            color = WuSubtle,
+                            lineHeight = 14.sp
+                        )
+                    }
                 }
             }
         }
