@@ -521,6 +521,21 @@ fun BoardScreen(
             Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.32f))
+                // 打开后：在遮罩任意位置向左滑动 → 关闭左侧栏
+                .pointerInput(Unit) {
+                    val closePx = 40.dp.toPx()
+                    var acc = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { acc = 0f },
+                        onHorizontalDrag = { change, amount ->
+                            acc += amount
+                            if (drawerOpen && acc < -closePx) {
+                                drawerOpen = false
+                            }
+                            change.consume()
+                        }
+                    )
+                }
                 .clickable { drawerOpen = false }
                 .zIndex(20f)
         )
@@ -539,6 +554,21 @@ fun BoardScreen(
                 .offset(x = sheetOffset)
                 .background(WuCard)
                 .zIndex(21f)
+                // 打开后：在抽屉面板上向左滑动 → 关闭左侧栏
+                .pointerInput(Unit) {
+                    val closePx = 40.dp.toPx()
+                    var acc = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { acc = 0f },
+                        onHorizontalDrag = { change, amount ->
+                            acc += amount
+                            if (drawerOpen && acc < -closePx) {
+                                drawerOpen = false
+                            }
+                            change.consume()
+                        }
+                    )
+                }
                 .clickable { }
         ) {
             BoardDrawerContent(
@@ -3217,7 +3247,13 @@ private fun ListSectionBlock(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 2.dp, end = 2.dp, top = 6.dp, bottom = 6.dp)
+                    // 折叠后标题栏卡片高度增加 4dp（上下各 +2dp）
+                    .padding(
+                        start = 2.dp,
+                        end = 2.dp,
+                        top = if (collapsed) 8.dp else 6.dp,
+                        bottom = if (collapsed) 8.dp else 6.dp
+                    )
             ) {
                 dragHandle()
                 Row(

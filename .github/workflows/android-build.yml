@@ -69,6 +69,27 @@ jobs:
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
 
+      # 取最近一个 tag 以来的提交，作为本次发布的「修改内容」
+      - name: Build changelog from commits
+        id: changelog
+        run: |
+          set -e
+          PREV=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$PREV" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV}..HEAD"
+          fi
+          LOG=$(git log $RANGE --no-merges --pretty=format:"%b")
+          if [ -z "$LOG" ]; then
+            LOG="- (本次无代码提交)"
+          fi
+          {
+            echo "log<<CHANGELOG_EOF"
+            echo "$LOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -119,9 +140,8 @@ jobs:
           name: wu_todo v${{ steps.ver.outputs.version }}
           body: |
             **wu_todo v${{ steps.ver.outputs.version }}**
-            - 支持点击看板列卡片，打开该列详情页
-            - 详情页可勾选任务并写回 .md
-            - 自动构建：已签名 release（可直接安装）
+            修改内容：
+            ${{ steps.changelog.outputs.log }}
           files: out/*.apk
-          generate_release_notes: true
+          generate_release_notes: false
           fail_on_unmatched_files: false
