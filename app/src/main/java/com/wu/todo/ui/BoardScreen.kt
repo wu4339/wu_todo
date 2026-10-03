@@ -3236,23 +3236,28 @@ private fun ListSectionBlock(
     var menuExpanded by remember { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        // 折叠后卡片比展开态列头高 4dp：上下内边距各 +2dp 让内容垂直居中；
+        // 同时整体上移 2dp，使列名/图标的垂直位置与展开态完全一致（折叠/展开时标题不上下移动）
+        modifier = Modifier
+            .fillMaxWidth()
+            .offset(y = if (collapsed) (-2).dp else 0.dp),
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = ListSectionBg),
         border = BorderStroke(1.dp, ListCardBorder)
     ) {
-        Column(Modifier.padding(bottom = 4.dp)) {
+        // 折叠态只剩列头一行，高度全部由列头内边距提供；展开态底部留 4dp 作为与内容的间距
+        Column(Modifier.padding(bottom = if (collapsed) 0.dp else 4.dp)) {
             // 列头：拖动手柄独立在左（不参与折叠点击）；其余区域点击折叠/展开（⋮ 自己消费点击）
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    // 折叠后标题栏卡片总高增加 4dp（加在底部），标题垂直位置保持不变，不会上下移动
+                    // 折叠后卡片总高增加 4dp：上下内边距各 +2dp，文字与图标在卡片内垂直居中
                     .padding(
                         start = 2.dp,
                         end = 2.dp,
-                        top = 6.dp,
-                        bottom = if (collapsed) 10.dp else 6.dp
+                        top = if (collapsed) 8.dp else 6.dp,
+                        bottom = if (collapsed) 8.dp else 6.dp
                     )
             ) {
                 dragHandle()
