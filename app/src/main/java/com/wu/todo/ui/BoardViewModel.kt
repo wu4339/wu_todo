@@ -15,6 +15,9 @@ import com.wu.todo.data.KanbanTask
 
 data class FolderFile(val name: String, val uri: Uri)
 
+/** 任务置顶的本地 key：按「列名 + 任务文本」标识（重排/刷新后稳定） */
+fun taskPinKey(section: KanbanSection, task: KanbanTask): String = "${section.title}\u0000${task.text}"
+
 data class BoardUiState(
     val loading: Boolean = false,
     val fileName: String? = null,
@@ -30,7 +33,9 @@ data class BoardUiState(
     /** 列标题 → 圆点颜色（ARGB Int），仅存本地 */
     val sectionColors: Map<String, Int> = emptyMap(),
     /** 左侧栏展示的文件夹内所有 .md 文件 */
-    val drawerFiles: List<FolderFile> = emptyList()
+    val drawerFiles: List<FolderFile> = emptyList(),
+    /** 已置顶（pin）的任务 key 集合（仅存本地，不写回 .md） */
+    val pinnedTasks: Set<String> = emptySet()
 ) {
     val totalTasks get() = sections.sumOf { it.total }
     val doneTasks get() = sections.sumOf { it.doneCount }
@@ -149,6 +154,18 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /** 切换某条任务的置顶状态（仅存本地，不写回 .md） */
+    fun togglePinTask(section: KanbanSection, task: KanbanTask) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        val key = taskPinKey(section, task)
+        val prefKey = pinnedTaskPrefsKey(uri)
+        val newSet = (prefs.getStringSet(prefKey, emptySet()) ?: emptySet()).toMutableSet()
+        if (key in newSet) newSet.remove(key) else newSet.add(key)
+        prefs.edit().putStringSet(prefKey, HashSet(newSet)).apply()
+        update { copy(pinnedTasks = newSet.toSet()) }
+    }
+
     /** 切换某个看板列的置顶状态（仅存本地，不写回 .md） */
     fun togglePin(section: KanbanSection) {
         val cur = state.value
@@ -187,6 +204,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun pinnedPrefsKey(uri: Uri) = "pinned_$uri"
+    private fun pinnedTaskPrefsKey(uri: Uri) = "pinned_tasks_$uri"
 
     private fun persist(uri: Uri, text: String) {
         runCatching { repo.writeText(uri, text) }
@@ -217,6 +235,25 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         val newLines = KanbanParser.renameTask(cur.lines, task, newText)
         val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
         update { copy(lines = newLines, sections = board.sections) }
+
+        // 同步任务置顶记录里的旧文本
+        val prefKey = pinnedTaskPrefsKey(uri)
+        val saved = prefs.getStringSet(prefKey, null)
+        val oldSection = cur.sections.firstOrNull { it.tasks.any { t -> t.id == task.id } }
+        if (saved != null && oldSection != null) {
+            val oldKey = taskPinKey(oldSection, task)
+            if (oldKey in saved) {
+                val newSet = saved.toMutableSet()
+                newSet.remove(oldKey)
+                val newTask = board.sections.flatMap { it.tasks }.firstOrNull { it.id == task.id }
+                val newSection = board.sections.firstOrNull { it.tasks.any { t -> t.id == newTask?.id } }
+                if (newTask != null && newSection != null) {
+                    newSet.add(taskPinKey(newSection, newTask))
+                    prefs.edit().putStringSet(prefKey, HashSet(newSet)).apply()
+                    update { copy(pinnedTasks = newSet.toSet()) }
+                }
+            }
+        }
 
         if (cur.readOnly) return
         persist(uri, newLines.joinToString(cur.lineSeparator))
@@ -436,6 +473,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         }.onSuccess { (board, u) ->
             prefs.edit().putString("last_uri", u.toString()).apply()
             val pinned = prefs.getStringSet(pinnedPrefsKey(u), emptySet())?.toSet() ?: emptySet()
+            val pinnedTasks = prefs.getStringSet(pinnedTaskPrefsKey(u), emptySet())?.toSet() ?: emptySet()
             val colors = loadSectionColors(u)
             update {
                 copy(
@@ -446,6 +484,7 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
                     lines = board.lines,
                     lineSeparator = board.lineSeparator,
                     pinnedTitles = pinned,
+                    pinnedTasks = pinnedTasks,
                     sectionColors = colors,
                     error = null
                 )

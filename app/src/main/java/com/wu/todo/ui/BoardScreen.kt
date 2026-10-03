@@ -431,6 +431,8 @@ fun BoardScreen(
                             pinnedSections = pinnedSections,
                             normalSections = normalSections,
                             collapsedTitles = collapsedTitles,
+                            pinnedTasks = state.pinnedTasks,
+                            onTogglePinTask = { section, task -> viewModel.togglePinTask(section, task) },
                             onToggleCollapse = { title ->
                                 collapsedTitles =
                                     if (title in collapsedTitles) collapsedTitles - title
@@ -2933,6 +2935,8 @@ private fun ListBoard(
     pinnedSections: List<KanbanSection>,
     normalSections: List<KanbanSection>,
     collapsedTitles: List<String>,
+    pinnedTasks: Set<String>,
+    onTogglePinTask: (KanbanSection, KanbanTask) -> Unit,
     onToggleCollapse: (String) -> Unit,
     onToggleTask: (KanbanTask) -> Unit,
     onOpenTask: (KanbanSection, KanbanTask) -> Unit,
@@ -2987,6 +2991,8 @@ private fun ListBoard(
                     ListSectionBlock(
                         section = section,
                         collapsed = section.title in collapsedTitles,
+                        pinnedTasks = pinnedTasks,
+                        onTogglePinTask = { task -> onTogglePinTask(section, task) },
                         // 置顶列不参与拖动排序（顺序保存在本地、不写回 .md），用图钉代替拖动手柄
                         dragHandle = {
                             Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
@@ -3050,6 +3056,8 @@ private fun ListBoard(
                     ListSectionBlock(
                         section = section,
                         collapsed = section.title in collapsedTitles,
+                        pinnedTasks = pinnedTasks,
+                        onTogglePinTask = { task -> onTogglePinTask(section, task) },
                         dragHandle = {
                             Box(
                                 modifier = Modifier
@@ -3152,6 +3160,8 @@ private fun ListBoard(
                 ListSectionBlock(
                     section = section,
                     collapsed = section.title in collapsedTitles,
+                    pinnedTasks = pinnedTasks,
+                    onTogglePinTask = { task -> onTogglePinTask(section, task) },
                     dragHandle = {},
                     onToggleCollapse = { onToggleCollapse(section.title) },
                     onToggleTask = onToggleTask,
@@ -3180,6 +3190,8 @@ private fun ListSectionBlock(
     collapsed: Boolean,
     /** 列头最左侧的控件：普通列是拖动排序手柄，置顶列是图钉，未分组列留空 */
     dragHandle: @Composable () -> Unit,
+    pinnedTasks: Set<String>,
+    onTogglePinTask: (KanbanTask) -> Unit,
     onToggleCollapse: () -> Unit,
     onToggleTask: (KanbanTask) -> Unit,
     onOpenTask: (KanbanTask) -> Unit,
@@ -3192,8 +3204,10 @@ private fun ListSectionBlock(
     onMoveTaskToTop: (KanbanTask) -> Unit,
     onDuplicateTask: (KanbanTask) -> Unit
 ) {
-    // 只列顶层任务（与主界面一致：子任务不展开、不计数），未完成在前
-    val tasks = section.topLevelTasks().sortedBy { it.done }
+    // 只列顶层任务（与主界面一致：子任务不展开、不计数）；置顶任务浮到最前，其余未完成在前
+    val isPinned: (KanbanTask) -> Boolean = { taskPinKey(section, it) in pinnedTasks }
+    val tasks = section.topLevelTasks()
+        .sortedWith(compareBy({ !isPinned(it) }, { it.done }))
     var menuExpanded by remember { mutableStateOf(false) }
 
     Card(
@@ -3295,13 +3309,15 @@ private fun ListSectionBlock(
                         val (subDone, subTotal) = section.subtaskProgress(task)
                         ListTaskCard(
                             task = task,
+                            pinned = isPinned(task),
                             subtaskDone = subDone,
                             subtaskTotal = subTotal,
                             onToggle = { onToggleTask(task) },
                             onOpen = { onOpenTask(task) },
                             onDelete = { onDeleteTask(task) },
                             onMoveToTop = { onMoveTaskToTop(task) },
-                            onDuplicate = { onDuplicateTask(task) }
+                            onDuplicate = { onDuplicateTask(task) },
+                            onTogglePin = { onTogglePinTask(task) }
                         )
                     }
                 }
@@ -3327,13 +3343,15 @@ private fun ListSectionBlock(
 @Composable
 private fun ListTaskCard(
     task: KanbanTask,
+    pinned: Boolean,
     subtaskDone: Int,
     subtaskTotal: Int,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
     onMoveToTop: () -> Unit,
-    onDuplicate: () -> Unit
+    onDuplicate: () -> Unit,
+    onTogglePin: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     val noteCount = task.notes.size
@@ -3373,12 +3391,24 @@ private fun ListTaskCard(
                     CheckCircle(done = false, size = 15.dp, onClick = onToggle)
                 }
                 Spacer(Modifier.width(10.dp))
+                if (pinned) {
+                    Icon(
+                        imageVector = Icons.Outlined.PushPin,
+                        contentDescription = "已置顶",
+                        tint = WuAccent,
+                        modifier = Modifier
+                            .size(13.dp)
+                            .rotate(-35f)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
                 Text(
                     text = task.text,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
                     color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTitle,
                     textDecoration = if (task.done) TextDecoration.LineThrough else null,
-                    lineHeight = 18.sp,
+                    lineHeight = 19.sp,
                     modifier = Modifier.weight(1f)
                 )
                 Box {
@@ -3399,6 +3429,10 @@ private fun ListTaskCard(
                         DropdownMenuItem(
                             text = { Text("删除", color = Color(0xFFD9483B)) },
                             onClick = { menuExpanded = false; onDelete() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (pinned) "取消置顶" else "置顶") },
+                            onClick = { menuExpanded = false; onTogglePin() }
                         )
                         DropdownMenuItem(
                             text = { Text("移到顶部") },
