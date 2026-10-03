@@ -1,5 +1,6 @@
 package com.wu.todo.ui
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -143,10 +144,13 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -458,7 +462,6 @@ fun BoardScreen(
                                 val newOrder = ordered.flatMap { section.blockLineIndexes(it) }
                                 viewModel.reorderTasks(section, newOrder)
                             },
-                            onDuplicateTask = { _, task -> viewModel.duplicateTask(task) },
                             onReorderSections = { newOrder -> viewModel.reorderSections(newOrder) }
                         )
                     } else {
@@ -2921,7 +2924,7 @@ private fun PinnedHeader() {
 // ===== 列表模式（参考图）：通栏的列区块、列头可折叠 =====
 
 /** 列表模式配色（复刻参考图）：列区块比页面背景略深的浅灰，任务卡片纯白并带细边框 */
-private val ListSectionBg = Color(0xFFEAEAEB)
+private val ListSectionBg = Color(0xFFF0F0F1)
 private val ListCardBorder = Color(0xFFDDDDDE)
 private val ListTaskCardBg = Color(0xFFFFFFFF)
 
@@ -2945,7 +2948,6 @@ private fun ListBoard(
     onDeleteCompleted: (KanbanSection) -> Unit,
     onDeleteTask: (KanbanSection, KanbanTask) -> Unit,
     onMoveTaskToTop: (KanbanSection, KanbanTask) -> Unit,
-    onDuplicateTask: (KanbanSection, KanbanTask) -> Unit,
     /** 拖动列头排序：回调新的列头行号顺序（按原始行号标识） */
     onReorderSections: (List<Int>) -> Unit
 ) {
@@ -3013,8 +3015,7 @@ private fun ListBoard(
                         onSetAllDone = { done -> onSetAllDone(section, done) },
                         onDeleteCompleted = { onDeleteCompleted(section) },
                         onDeleteTask = { task -> onDeleteTask(section, task) },
-                        onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) },
-                        onDuplicateTask = { task -> onDuplicateTask(section, task) }
+                        onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) }
                     )
                 }
             }
@@ -3145,8 +3146,7 @@ private fun ListBoard(
                         onSetAllDone = { done -> onSetAllDone(section, done) },
                         onDeleteCompleted = { onDeleteCompleted(section) },
                         onDeleteTask = { task -> onDeleteTask(section, task) },
-                        onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) },
-                        onDuplicateTask = { task -> onDuplicateTask(section, task) }
+                        onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) }
                     )
                 }
             }
@@ -3170,8 +3170,7 @@ private fun ListBoard(
                     onSetAllDone = { done -> onSetAllDone(section, done) },
                     onDeleteCompleted = { onDeleteCompleted(section) },
                     onDeleteTask = { task -> onDeleteTask(section, task) },
-                    onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) },
-                    onDuplicateTask = { task -> onDuplicateTask(section, task) }
+                    onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) }
                 )
             }
         }
@@ -3200,8 +3199,7 @@ private fun ListSectionBlock(
     onSetAllDone: (Boolean) -> Unit,
     onDeleteCompleted: () -> Unit,
     onDeleteTask: (KanbanTask) -> Unit,
-    onMoveTaskToTop: (KanbanTask) -> Unit,
-    onDuplicateTask: (KanbanTask) -> Unit
+    onMoveTaskToTop: (KanbanTask) -> Unit
 ) {
     // 只列顶层任务（与主界面一致：子任务不展开、不计数），未完成在前
     val tasks = section.topLevelTasks().sortedBy { it.done }
@@ -3315,8 +3313,7 @@ private fun ListSectionBlock(
                             onToggle = { onToggleTask(task) },
                             onOpen = { onOpenTask(task) },
                             onDelete = { onDeleteTask(task) },
-                            onMoveToTop = { onMoveTaskToTop(task) },
-                            onDuplicate = { onDuplicateTask(task) }
+                            onMoveToTop = { onMoveTaskToTop(task) }
                         )
                     }
                 }
@@ -3347,10 +3344,11 @@ private fun ListTaskCard(
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
-    onMoveToTop: () -> Unit,
-    onDuplicate: () -> Unit
+    onMoveToTop: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val noteCount = task.notes.size
     val hasMeta = subtaskTotal > 0 || noteCount > 0
     Card(
@@ -3424,8 +3422,12 @@ private fun ListTaskCard(
                             onClick = { menuExpanded = false; onOpen() }
                         )
                         DropdownMenuItem(
-                            text = { Text("复制卡片") },
-                            onClick = { menuExpanded = false; onDuplicate() }
+                            text = { Text("复制") },
+                            onClick = {
+                                menuExpanded = false
+                                clipboard.setText(AnnotatedString(task.text))
+                                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                            }
                         )
                     }
                 }

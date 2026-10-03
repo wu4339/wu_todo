@@ -219,34 +219,6 @@ object KanbanParser {
         return result
     }
 
-    /**
-     * 复制任务：把该任务块（任务行 + 缩进的备注/子任务行）整块复制一份，插到原块之后。
-     * 完成状态、note、子任务一并复制；块尾空行不复制。
-     */
-    fun duplicateTask(lines: List<String>, task: KanbanTask): List<String> {
-        val idx = task.lineIndex
-        if (idx !in lines.indices) return lines
-        if (TASK_RE.find(lines[idx]) == null) return lines
-        val taskIndent = lines[idx].takeWhile { it == ' ' || it == '\t' }
-        // 块尾：任务行下方连续的「缩进行 / 空行 / 缩进更深的任务行（子任务）」都属于本块
-        var end = idx + 1
-        while (end < lines.size) {
-            val ln = lines[end]
-            if (TASK_RE.find(ln) != null) {
-                val ind = ln.takeWhile { it == ' ' || it == '\t' }
-                if (ind.length > taskIndent.length) { end++; continue } else break
-            }
-            if (ln.isBlank() || ln.startsWith(" ") || ln.startsWith("\t")) { end++; continue }
-            break
-        }
-        // 块尾的空行不复制
-        var blockEnd = end
-        while (blockEnd > idx + 1 && lines[blockEnd - 1].isBlank()) blockEnd--
-        val result = ArrayList(lines)
-        result.addAll(blockEnd, lines.subList(idx, blockEnd))
-        return result
-    }
-
     /** 重命名任务：仅替换任务行中的文本部分（保留勾选状态、缩进与列表标记） */
     fun renameTask(lines: List<String>, task: KanbanTask, newText: String): List<String> {
         val idx = task.lineIndex
