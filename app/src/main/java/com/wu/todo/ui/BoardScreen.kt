@@ -3241,18 +3241,18 @@ private fun ListSectionBlock(
         colors = CardDefaults.cardColors(containerColor = ListSectionBg),
         border = BorderStroke(1.dp, ListCardBorder)
     ) {
-        Column(Modifier.padding(bottom = if (collapsed) 0.dp else 4.dp)) {
+        Column(Modifier.padding(bottom = 4.dp)) {
             // 列头：拖动手柄独立在左（不参与折叠点击）；其余区域点击折叠/展开（⋮ 自己消费点击）
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    // 折叠后标题栏卡片高度增加 4dp（上下各 +2dp）
+                    // 折叠后标题栏卡片总高增加 4dp（加在底部），标题垂直位置保持不变，不会上下移动
                     .padding(
                         start = 2.dp,
                         end = 2.dp,
-                        top = if (collapsed) 8.dp else 6.dp,
-                        bottom = if (collapsed) 8.dp else 6.dp
+                        top = 6.dp,
+                        bottom = if (collapsed) 10.dp else 6.dp
                     )
             ) {
                 dragHandle()
@@ -3261,7 +3261,11 @@ private fun ListSectionBlock(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable { onToggleCollapse() }
+                        // 无点击涟漪/高亮等点击效果，仅保留折叠/展开功能
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onToggleCollapse() }
                         .padding(start = 1.dp, end = 2.dp)
                 ) {
                     Icon(
