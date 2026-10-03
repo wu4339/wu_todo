@@ -3219,7 +3219,7 @@ private fun ListSectionBlock(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 2.dp, end = 2.dp, top = 3.dp, bottom = 3.dp)
+                    .padding(start = 2.dp, end = 2.dp, top = 6.dp, bottom = 6.dp)
             ) {
                 dragHandle()
                 Row(
@@ -3424,7 +3424,7 @@ private fun ListTaskCard(
                             onClick = { menuExpanded = false; onOpen() }
                         )
                         DropdownMenuItem(
-                            text = { Text("复制") },
+                            text = { Text("复制卡片") },
                             onClick = { menuExpanded = false; onDuplicate() }
                         )
                     }
