@@ -43,7 +43,9 @@ import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
 import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -122,6 +124,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -219,6 +222,20 @@ fun BoardScreen(
     // 列表模式默认折叠所有列：每次"进入列表模式"都重新默认折叠一次；
     // 列表模式内的数据刷新不会重置用户已手动展开/折叠的状态。
     var collapsedSeededForList by rememberSaveable { mutableStateOf(false) }
+    // 主界面两种视图的滚动位置提升到屏幕层级：开/关文件抽屉（或数据刷新导致
+    // 视图暂被卸载重建）后仍能记住位置，不会跳回顶部
+    val boardGridState = rememberSaveable(
+        saver = listSaver(
+            save = { listOf(it.firstVisibleItemIndex, it.firstVisibleItemScrollOffset) },
+            restore = { LazyStaggeredGridState(it[0] as Int, it[1] as Int) }
+        )
+    ) { LazyStaggeredGridState() }
+    val boardListScrollState = rememberSaveable(
+        saver = listSaver(
+            save = { listOf(it.value) },
+            restore = { ScrollState(it[0] as Int) }
+        )
+    ) { ScrollState(0) }
     LaunchedEffect(listMode, state.sections) {
         if (listMode && state.sections.isNotEmpty()) {
             if (!collapsedSeededForList) {
@@ -435,6 +452,7 @@ fun BoardScreen(
                             pinnedSections = pinnedSections,
                             normalSections = normalSections,
                             collapsedTitles = collapsedTitles,
+                            scrollState = boardListScrollState,
                             onTogglePin = viewModel::togglePin,
                             onToggleCollapse = { title ->
                                 collapsedTitles =
@@ -468,6 +486,7 @@ fun BoardScreen(
                         // 瀑布流（StaggeredGrid）：卡片按自身高度紧密堆叠，
                         // 不再像普通 Grid 那样按行对齐而在矮卡片下方留出空白
                         LazyVerticalStaggeredGrid(
+                            state = boardGridState,
                             columns = StaggeredGridCells.Fixed(2),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalItemSpacing = 8.dp,
@@ -2979,7 +2998,9 @@ private fun ListBoard(
     onDeleteTask: (KanbanSection, KanbanTask) -> Unit,
     onMoveTaskToTop: (KanbanSection, KanbanTask) -> Unit,
     /** 拖动列头排序：回调新的列头行号顺序（按原始行号标识） */
-    onReorderSections: (List<Int>) -> Unit
+    onReorderSections: (List<Int>) -> Unit,
+    /** 列表模式滚动位置（由上层提升，开/关抽屉后仍能记住位置） */
+    scrollState: ScrollState = rememberScrollState()
 ) {
     // ===== 拖动排序模型（与备注/子任务同套）=====
     // 每个列区块的高度：按"越过相邻区块中线即换位"计算目标槽位
@@ -3010,7 +3031,7 @@ private fun ListBoard(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
