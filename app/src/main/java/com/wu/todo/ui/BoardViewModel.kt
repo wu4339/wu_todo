@@ -265,6 +265,24 @@ class BoardViewModel(app: Application) : AndroidViewModel(app) {
         persist(uri, newLines.joinToString(cur.lineSeparator))
     }
 
+    /**
+     * 拖动排序（列表模式）：按新的列头行号顺序重排整个看板列并写回 .md。
+     * 每列连同其任务/子任务/备注行作为整体移动；首个列头之前的行与设置注释块保持原位。
+     */
+    fun reorderSections(orderedHeaderLineIndexes: List<Int>) {
+        val cur = state.value
+        val uri = cur.fileUri ?: return
+        if (orderedHeaderLineIndexes.size < 2) return
+
+        val newLines = KanbanParser.reorderSections(cur.lines, orderedHeaderLineIndexes)
+        if (newLines == cur.lines) return
+        val board = KanbanParser.parse(newLines.joinToString(cur.lineSeparator), cur.fileName ?: "")
+        update { copy(lines = newLines, sections = board.sections) }
+
+        if (cur.readOnly) return
+        persist(uri, newLines.joinToString(cur.lineSeparator))
+    }
+
     /** 给任务添加一个缩进子任务并写回 .md */
     fun addSubtask(task: KanbanTask, text: String) {
         val cur = state.value

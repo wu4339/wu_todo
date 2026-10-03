@@ -389,6 +389,55 @@ object KanbanParser {
         return result
     }
 
+    /**
+     * 重排整个看板列（列表模式的长按/拖动排序）。
+     *
+     * [orderedHeaderLineIndexes] 为「按原始行号标识的当前顺序」——即拖动前每个列头所在的行号，
+     * 按期望的新顺序排列。每列连同其下方的任务/子任务/备注行、以及列尾空行作为整体一起移动；
+     * 首个列头之前的行（frontmatter 等）与 Obsidian 设置注释块保持原位。
+     * 行号不完整或含无效值（如「未分组」伪列的 -1）时保守地原样返回。
+     */
+    fun reorderSections(lines: List<String>, orderedHeaderLineIndexes: List<Int>): List<String> {
+        if (orderedHeaderLineIndexes.size < 2) return lines
+        // 全部行号都必须指向真实存在的列头行，否则不动（避免把 -1 之类的伪列算进来）
+        if (orderedHeaderLineIndexes.any { it !in lines.indices }) return lines
+        if (orderedHeaderLineIndexes.any { SECTION_RE.find(lines[it].trim()) == null }) return lines
+
+        val sortedHeads = orderedHeaderLineIndexes.sorted()
+        val regionStart = sortedHeads.first()
+        // 区域结束：设置注释块起始处（或文件末尾）
+        var regionEnd = lines.size
+        for (i in regionStart until lines.size) {
+            if (lines[i].trim().startsWith("%%")) {
+                regionEnd = i
+                break
+            }
+        }
+
+        // 切块：第 idx 块 = [头行, 下一块头行)；块尾空行单独记下，重排后原样接回
+        val blocks = LinkedHashMap<Int, List<String>>()
+        val trailingBlanks = HashMap<Int, List<String>>()
+        sortedHeads.forEachIndexed { idx, h ->
+            val next = if (idx + 1 < sortedHeads.size) sortedHeads[idx + 1] else regionEnd
+            var e = next
+            while (e > h + 1 && lines[e - 1].isBlank()) e--
+            blocks[h] = ArrayList(lines.subList(h, e))
+            trailingBlanks[h] = ArrayList(lines.subList(e, next))
+        }
+
+        val rebuilt = ArrayList<String>()
+        orderedHeaderLineIndexes.forEach { h ->
+            blocks[h]?.let { rebuilt.addAll(it) }
+            trailingBlanks[h]?.let { rebuilt.addAll(it) }
+        }
+        if (rebuilt.size != regionEnd - regionStart) return lines
+
+        val result = ArrayList(lines)
+        result.subList(regionStart, regionEnd).clear()
+        result.addAll(regionStart, rebuilt)
+        return result
+    }
+
     /** 任务行下方的连续备注行判定：有缩进、且不是任务行（`- 内容` 与旧的缩进纯文本都算） */
     private fun isNoteLine(l: String): Boolean =
         l.isNotBlank() && (l.startsWith(" ") || l.startsWith("\t")) && TASK_RE.find(l) == null

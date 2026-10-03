@@ -430,7 +430,6 @@ fun BoardScreen(
                         ListBoard(
                             pinnedSections = pinnedSections,
                             normalSections = normalSections,
-                            sectionColors = state.sectionColors,
                             collapsedTitles = collapsedTitles,
                             onToggleCollapse = { title ->
                                 collapsedTitles =
@@ -458,7 +457,8 @@ fun BoardScreen(
                                 val newOrder = ordered.flatMap { section.blockLineIndexes(it) }
                                 viewModel.reorderTasks(section, newOrder)
                             },
-                            onDuplicateTask = { _, task -> viewModel.duplicateTask(task) }
+                            onDuplicateTask = { _, task -> viewModel.duplicateTask(task) },
+                            onReorderSections = { newOrder -> viewModel.reorderSections(newOrder) }
                         )
                     } else {
                         // 瀑布流（StaggeredGrid）：卡片按自身高度紧密堆叠，
@@ -2919,10 +2919,10 @@ private fun PinnedHeader() {
 
 // ===== 列表模式（参考图）：通栏的列区块、列头可折叠 =====
 
-/** 列表模式的配色：列区块比页面背景(WuBackground #F2F2F2)深一档，任务卡片浅灰（不刺白） */
-private val ListSectionBg = Color(0xFFE7E7E7)
-private val ListCardBorder = Color(0xFFDBDBDB)
-private val ListTaskCardBg = Color(0xFFF5F5F5)
+/** 列表模式配色（复刻参考图）：列区块比页面背景略深的浅灰，任务卡片纯白并带细边框 */
+private val ListSectionBg = Color(0xFFEAEAEB)
+private val ListCardBorder = Color(0xFFDDDDDE)
+private val ListTaskCardBg = Color(0xFFFFFFFF)
 
 /**
  * 列表模式总览：每列一个通栏区块，列头点击可折叠/展开。
@@ -2932,7 +2932,6 @@ private val ListTaskCardBg = Color(0xFFF5F5F5)
 private fun ListBoard(
     pinnedSections: List<KanbanSection>,
     normalSections: List<KanbanSection>,
-    sectionColors: Map<String, Int>,
     collapsedTitles: List<String>,
     onToggleCollapse: (String) -> Unit,
     onToggleTask: (KanbanTask) -> Unit,
@@ -2944,60 +2943,243 @@ private fun ListBoard(
     onDeleteCompleted: (KanbanSection) -> Unit,
     onDeleteTask: (KanbanSection, KanbanTask) -> Unit,
     onMoveTaskToTop: (KanbanSection, KanbanTask) -> Unit,
-    onDuplicateTask: (KanbanSection, KanbanTask) -> Unit
+    onDuplicateTask: (KanbanSection, KanbanTask) -> Unit,
+    /** 拖动列头排序：回调新的列头行号顺序（按原始行号标识） */
+    onReorderSections: (List<Int>) -> Unit
 ) {
-    // 单个列区块的渲染（pinned 与普通列共用）
-    val block: @Composable (KanbanSection) -> Unit = { section ->
-        ListSectionBlock(
-            section = section,
-            dotColor = Color(sectionColors[section.title] ?: WuAccent.toArgb()),
-            collapsed = section.title in collapsedTitles,
-            onToggleCollapse = { onToggleCollapse(section.title) },
-            onToggleTask = onToggleTask,
-            onOpenTask = { task -> onOpenTask(section, task) },
-            onOpenSection = { onOpenSection(section) },
-            onAddCard = { onAddCard(section) },
-            onEditList = { onEditList(section) },
-            onSetAllDone = { done -> onSetAllDone(section, done) },
-            onDeleteCompleted = { onDeleteCompleted(section) },
-            onDeleteTask = { task -> onDeleteTask(section, task) },
-            onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) },
-            onDuplicateTask = { task -> onDuplicateTask(section, task) }
-        )
-    }
+    // ===== 拖动排序模型（与备注/子任务同套）=====
+    // 每个列区块的高度：按"越过相邻区块中线即换位"计算目标槽位
+    val rowHeights = remember { mutableMapOf<Int, Float>() }
+    var dragHead by remember { mutableStateOf<Int?>(null) }
+    var dragDy by remember { mutableFloatStateOf(0f) }
+    var dragFrom by remember { mutableStateOf(-1) }
+    var dragTo by remember { mutableStateOf(-1) }
+    // 松手后正在回落到目标槽位的区块：按列名（重排后行号会变，列名稳定）标记，
+    // 保留最后一帧偏移再用动画收敛到 0，避免落位时"一跳"
+    var settleTitle by remember { mutableStateOf<String?>(null) }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 96.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+    // 参与排序的列：有真实列头行号（≥0）的才可拖动；「未分组」这类伪列排在最后
+    val draggable = normalSections.filter { it.headerLineIndex >= 0 }
+    val trailing = normalSections.filter { it.headerLineIndex < 0 }
+    val order = draggable.map { it.headerLineIndex }
+    val orderState = rememberUpdatedState(order)
+    val reorderState = rememberUpdatedState(onReorderSections)
+    val byHead = draggable.associateBy { it.headerLineIndex }
+
+    val movingDy by animateFloatAsState(
+        targetValue = if (dragHead != null) dragDy else 0f,
+        animationSpec = if (dragHead != null) snap() else tween(durationMillis = 160),
+        label = "sectionMovingDy"
+    )
+    val dragHeight = dragHead?.let { rowHeights[it] } ?: 0f
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (pinnedSections.isNotEmpty()) {
-            item(key = "list_pinned_header") { PinnedHeader() }
-            items(count = pinnedSections.size, key = { i -> "lp_${pinnedSections[i].uniqueKey()}" }) { i ->
-                block(pinnedSections[i])
+            PinnedHeader()
+            pinnedSections.forEach { section ->
+                key("pin_${section.uniqueKey()}") {
+                    ListSectionBlock(
+                        section = section,
+                        collapsed = section.title in collapsedTitles,
+                        // 置顶列不参与拖动排序（顺序保存在本地、不写回 .md），用图钉代替拖动手柄
+                        dragHandle = {
+                            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Outlined.PushPin,
+                                    contentDescription = null,
+                                    tint = WuSubtle,
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .rotate(-35f)
+                                )
+                            }
+                        },
+                        onToggleCollapse = { onToggleCollapse(section.title) },
+                        onToggleTask = onToggleTask,
+                        onOpenTask = { task -> onOpenTask(section, task) },
+                        onOpenSection = { onOpenSection(section) },
+                        onAddCard = { onAddCard(section) },
+                        onEditList = { onEditList(section) },
+                        onSetAllDone = { done -> onSetAllDone(section, done) },
+                        onDeleteCompleted = { onDeleteCompleted(section) },
+                        onDeleteTask = { task -> onDeleteTask(section, task) },
+                        onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) },
+                        onDuplicateTask = { task -> onDuplicateTask(section, task) }
+                    )
+                }
             }
             if (normalSections.isNotEmpty()) {
-                item(key = "list_pinned_divider") {
-                    HorizontalDivider(
-                        color = WuDivider,
-                        thickness = 1.dp,
-                        modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
+                HorizontalDivider(
+                    color = WuDivider,
+                    thickness = 1.dp,
+                    modifier = Modifier.padding(vertical = 2.dp)
+                )
+            }
+        }
+
+        order.forEachIndexed { index, head ->
+            val section = byHead[head] ?: return@forEachIndexed
+            key(head) {
+                val dragging = dragHead == head
+                // 让位位移：向下拖时 (from, to] 整体上移一个区块高；向上拖时 [to, from) 整体下移
+                val shiftTarget = when {
+                    dragHead == null || dragging -> 0f
+                    dragFrom < dragTo && index > dragFrom && index <= dragTo -> -dragHeight
+                    dragFrom > dragTo && index in dragTo until dragFrom -> dragHeight
+                    else -> 0f
+                }
+                val shift by animateFloatAsState(
+                    targetValue = shiftTarget,
+                    animationSpec = if (dragHead == null) snap() else tween(durationMillis = 150),
+                    label = "sectionShift"
+                )
+                val translation = if (dragging || settleTitle == section.title) movingDy else shift
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .zIndex(if (dragging) 1f else 0f)
+                        .graphicsLayer { translationY = translation }
+                        .onGloballyPositioned { c -> rowHeights[head] = c.size.height.toFloat() }
+                ) {
+                    ListSectionBlock(
+                        section = section,
+                        collapsed = section.title in collapsedTitles,
+                        dragHandle = {
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .pointerInput(head) {
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                val ord = orderState.value
+                                                val f = ord.indexOf(head)
+                                                if (f >= 0) {
+                                                    settleTitle = null
+                                                    dragDy = 0f
+                                                    dragFrom = f
+                                                    dragTo = f
+                                                    dragHead = head
+                                                }
+                                            },
+                                            onDrag = { change, amount ->
+                                                change.consume()
+                                                dragDy += amount.y
+                                                val ord = orderState.value
+                                                // 按区块高度累计推算目标槽位：越过相邻区块中线才算换位
+                                                var acc = 0f
+                                                var t = dragFrom
+                                                if (dragDy > 0f) {
+                                                    while (t < ord.size - 1) {
+                                                        val h = rowHeights[ord[t + 1]] ?: 0f
+                                                        if (h > 0f && dragDy > acc + h / 2f) {
+                                                            acc += h
+                                                            t++
+                                                        } else break
+                                                    }
+                                                } else if (dragDy < 0f) {
+                                                    while (t > 0) {
+                                                        val h = rowHeights[ord[t - 1]] ?: 0f
+                                                        if (h > 0f && -dragDy > acc + h / 2f) {
+                                                            acc += h
+                                                            t--
+                                                        } else break
+                                                    }
+                                                }
+                                                dragTo = t
+                                            },
+                                            onDragEnd = {
+                                                val ord = orderState.value
+                                                val from = dragFrom
+                                                val to = dragTo
+                                                dragHead = null
+                                                dragDy = 0f
+                                                dragFrom = -1
+                                                dragTo = -1
+                                                if (from in ord.indices && to in ord.indices && from != to) {
+                                                    // 松手才一次性写回真实顺序；被拖区块标记"回落中"平滑收位
+                                                    val newOrder = ord.toMutableList()
+                                                        .also { it.add(to, it.removeAt(from)) }
+                                                    settleTitle = section.title
+                                                    reorderState.value(newOrder)
+                                                } else {
+                                                    settleTitle = null
+                                                }
+                                            },
+                                            onDragCancel = {
+                                                dragHead = null
+                                                dragDy = 0f
+                                                dragFrom = -1
+                                                dragTo = -1
+                                                settleTitle = null
+                                            }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.DragHandle,
+                                    contentDescription = "拖动排序列",
+                                    tint = WuSubtle,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        },
+                        onToggleCollapse = { onToggleCollapse(section.title) },
+                        onToggleTask = onToggleTask,
+                        onOpenTask = { task -> onOpenTask(section, task) },
+                        onOpenSection = { onOpenSection(section) },
+                        onAddCard = { onAddCard(section) },
+                        onEditList = { onEditList(section) },
+                        onSetAllDone = { done -> onSetAllDone(section, done) },
+                        onDeleteCompleted = { onDeleteCompleted(section) },
+                        onDeleteTask = { task -> onDeleteTask(section, task) },
+                        onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) },
+                        onDuplicateTask = { task -> onDuplicateTask(section, task) }
                     )
                 }
             }
         }
-        items(count = normalSections.size, key = { i -> normalSections[i].uniqueKey() }) { i ->
-            block(normalSections[i])
+
+        // 「未分组」等无列头的伪列：不参与排序，排在最后
+        trailing.forEach { section ->
+            key("tail_${section.uniqueKey()}") {
+                ListSectionBlock(
+                    section = section,
+                    collapsed = section.title in collapsedTitles,
+                    dragHandle = {},
+                    onToggleCollapse = { onToggleCollapse(section.title) },
+                    onToggleTask = onToggleTask,
+                    onOpenTask = { task -> onOpenTask(section, task) },
+                    onOpenSection = { onOpenSection(section) },
+                    onAddCard = { onAddCard(section) },
+                    onEditList = { onEditList(section) },
+                    onSetAllDone = { done -> onSetAllDone(section, done) },
+                    onDeleteCompleted = { onDeleteCompleted(section) },
+                    onDeleteTask = { task -> onDeleteTask(section, task) },
+                    onMoveTaskToTop = { task -> onMoveTaskToTop(section, task) },
+                    onDuplicateTask = { task -> onDuplicateTask(section, task) }
+                )
+            }
         }
     }
 }
 
-/** 列表模式里的一个列区块：列头（箭头 + 圆点 + 列名 + 任务数 + ⋮）+ 任务卡片 +「+添加卡片」 */
+/**
+ * 列表模式里的一个列区块（复刻参考图）：列头（拖动手柄 + 箭头 + 列名 + 任务数 + ⋮）
+ * + 任务卡片竖排 +「+添加卡片」。整体紧凑、圆角小、字号小。
+ */
 @Composable
 private fun ListSectionBlock(
     section: KanbanSection,
-    dotColor: Color,
     collapsed: Boolean,
+    /** 列头最左侧的控件：普通列是拖动排序手柄，置顶列是图钉，未分组列留空 */
+    dragHandle: @Composable () -> Unit,
     onToggleCollapse: () -> Unit,
     onToggleTask: (KanbanTask) -> Unit,
     onOpenTask: (KanbanTask) -> Unit,
@@ -3016,86 +3198,88 @@ private fun ListSectionBlock(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = ListSectionBg),
         border = BorderStroke(1.dp, ListCardBorder)
     ) {
-        Column(Modifier.padding(bottom = 4.dp)) {
-            // 列头：点击空白区域折叠/展开（⋮ 自己消费点击，不触发折叠）
+        Column(Modifier.padding(bottom = if (collapsed) 0.dp else 4.dp)) {
+            // 列头：拖动手柄独立在左（不参与折叠点击）；其余区域点击折叠/展开（⋮ 自己消费点击）
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onToggleCollapse() }
-                    .padding(start = 10.dp, end = 6.dp, top = 10.dp, bottom = 10.dp)
+                    .padding(start = 2.dp, end = 2.dp, top = 3.dp, bottom = 3.dp)
             ) {
-                Icon(
-                    imageVector = if (collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
-                    contentDescription = if (collapsed) "展开列表" else "折叠列表",
-                    tint = WuSubtle,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Box(
+                dragHandle()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(dotColor)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = section.title,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = WuTitle,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(Modifier.width(10.dp))
-                // 任务数（折叠时也显示，参考图里的 9 / 2 / 3）
-                Text(
-                    text = "${tasks.size}",
-                    fontSize = 14.sp,
-                    color = WuSubtle
-                )
-                Spacer(Modifier.width(2.dp))
-                Box {
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onToggleCollapse() }
+                        .padding(start = 1.dp, end = 2.dp)
+                ) {
                     Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "列表操作",
+                        imageVector = if (collapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                        contentDescription = if (collapsed) "展开列表" else "折叠列表",
                         tint = WuSubtle,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { menuExpanded = true }
-                            .padding(7.dp)
-                            .size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("编辑列表") },
-                            onClick = { menuExpanded = false; onEditList() }
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = section.title,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = WuTitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    // 任务数（折叠时也显示）
+                    Text(
+                        text = "${tasks.size}",
+                        fontSize = 12.sp,
+                        color = WuSubtle
+                    )
+                    Spacer(Modifier.width(2.dp))
+                    Box {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = "列表操作",
+                            tint = WuSubtle,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { menuExpanded = true }
+                                .padding(5.dp)
+                                .size(16.dp)
                         )
-                        DropdownMenuItem(
-                            text = { Text("打开列详情") },
-                            onClick = { menuExpanded = false; onOpenSection() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("添加卡片") },
-                            onClick = { menuExpanded = false; onAddCard() }
-                        )
-                        HorizontalDivider(color = WuDivider, thickness = 1.dp)
-                        DropdownMenuItem(
-                            text = { Text("全部标记完成") },
-                            onClick = { menuExpanded = false; onSetAllDone(true) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("清除已完成") },
-                            onClick = { menuExpanded = false; onDeleteCompleted() }
-                        )
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("编辑列表") },
+                                onClick = { menuExpanded = false; onEditList() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("打开列详情") },
+                                onClick = { menuExpanded = false; onOpenSection() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("添加卡片") },
+                                onClick = { menuExpanded = false; onAddCard() }
+                            )
+                            HorizontalDivider(color = WuDivider, thickness = 1.dp)
+                            DropdownMenuItem(
+                                text = { Text("全部标记完成") },
+                                onClick = { menuExpanded = false; onSetAllDone(true) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("清除已完成") },
+                                onClick = { menuExpanded = false; onDeleteCompleted() }
+                            )
+                        }
                     }
                 }
             }
@@ -3104,8 +3288,8 @@ private fun ListSectionBlock(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     tasks.forEach { task ->
                         val (subDone, subTotal) = section.subtaskProgress(task)
@@ -3126,18 +3310,20 @@ private fun ListSectionBlock(
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
+                        .padding(horizontal = 8.dp)
+                        .padding(top = 4.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .clickable { onAddCard() }
-                        .padding(vertical = if (tasks.isEmpty()) 12.dp else 14.dp)
+                        .padding(vertical = if (tasks.isEmpty()) 9.dp else 11.dp)
                 ) {
-                    Text("+添加卡片", fontSize = 14.sp, color = WuSubtle)
+                    Text("+添加卡片", fontSize = 13.sp, color = WuSubtle)
                 }
             }
         }
     }
 }
 
-/** 列表模式里的任务卡片：浅灰圆角，左侧圆圈切换完成，点卡片=编辑；⋮ 菜单：删除/移到顶部/编辑/复制；有子任务时底部显示计数 */
+/** 列表模式里的任务卡片（复刻参考图）：纯白小圆角卡片，左侧圆圈切换完成，点卡片=编辑；⋮ 菜单：删除/移到顶部/编辑/复制；有子任务/备注时底部显示计数 */
 @Composable
 private fun ListTaskCard(
     task: KanbanTask,
@@ -3150,11 +3336,13 @@ private fun ListTaskCard(
     onDuplicate: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val noteCount = task.notes.size
+    val hasMeta = subtaskTotal > 0 || noteCount > 0
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onOpen() },
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = ListTaskCardBg),
         border = BorderStroke(1.dp, ListCardBorder)
     ) {
@@ -3164,92 +3352,91 @@ private fun ListTaskCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(
-                        start = 12.dp,
+                        start = 10.dp,
                         end = 2.dp,
-                        top = 11.dp,
-                        // 有子任务计数行时收紧底部间距，让计数贴着任务文字
-                        bottom = if (subtaskTotal > 0) 2.dp else 11.dp
+                        top = 7.dp,
+                        // 有计数行时收紧底部间距，让计数贴着任务文字
+                        bottom = if (hasMeta) 1.dp else 7.dp
                     )
             ) {
-            if (task.done) {
-                // 已完成：灰色勾，仍可点回未完成
-                Icon(
-                    imageVector = Icons.Filled.Check,
-                    contentDescription = "标记未完成",
-                    tint = WuDoneGrey,
-                    modifier = Modifier
-                        .size(16.dp)
-                        .clickable { onToggle() }
+                if (task.done) {
+                    // 已完成：灰色勾，仍可点回未完成
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = "标记未完成",
+                        tint = WuDoneGrey,
+                        modifier = Modifier
+                            .size(15.dp)
+                            .clickable { onToggle() }
+                    )
+                } else {
+                    CheckCircle(done = false, size = 15.dp, onClick = onToggle)
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = task.text,
+                    fontSize = 13.sp,
+                    color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTitle,
+                    textDecoration = if (task.done) TextDecoration.LineThrough else null,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.weight(1f)
                 )
-            } else {
-                CheckCircle(done = false, size = 16.dp, onClick = onToggle)
-            }
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = task.text,
-                fontSize = 14.sp,
-                color = if (task.done) WuTaskText.copy(alpha = 0.7f) else WuTitle,
-                textDecoration = if (task.done) TextDecoration.LineThrough else null,
-                lineHeight = 20.sp,
-                modifier = Modifier.weight(1f)
-            )
-            Box {
-                Icon(
-                    imageVector = Icons.Filled.MoreVert,
-                    contentDescription = "更多操作",
-                    tint = WuSubtle,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { menuExpanded = true }
-                        .padding(6.dp)
-                        .size(18.dp)
-                )
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("删除", color = Color(0xFFD9483B)) },
-                        onClick = { menuExpanded = false; onDelete() }
+                Box {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = WuSubtle,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { menuExpanded = true }
+                            .padding(5.dp)
+                            .size(16.dp)
                     )
-                    DropdownMenuItem(
-                        text = { Text("移到顶部") },
-                        onClick = { menuExpanded = false; onMoveToTop() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("编辑") },
-                        onClick = { menuExpanded = false; onOpen() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("复制") },
-                        onClick = { menuExpanded = false; onDuplicate() }
-                    )
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("删除", color = Color(0xFFD9483B)) },
+                            onClick = { menuExpanded = false; onDelete() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("移到顶部") },
+                            onClick = { menuExpanded = false; onMoveToTop() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("编辑") },
+                            onClick = { menuExpanded = false; onOpen() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("复制") },
+                            onClick = { menuExpanded = false; onDuplicate() }
+                        )
+                    }
                 }
             }
-        }
             // 卡片底部计数：子任务「已完成/总数」；其后若有 note 则追加 note 个数
-            val noteCount = task.notes.size
-            if (subtaskTotal > 0 || noteCount > 0) {
+            if (hasMeta) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 40.dp, end = 14.dp)
-                        .padding(bottom = 10.dp)
+                        .padding(start = 35.dp, end = 12.dp)
+                        .padding(bottom = 7.dp)
                 ) {
                     if (subtaskTotal > 0) {
                         Icon(
                             imageVector = Icons.Outlined.FormatListBulleted,
                             contentDescription = null,
                             tint = WuSubtle,
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(12.dp)
                         )
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(5.dp))
                         Text(
                             text = "$subtaskDone/$subtaskTotal",
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             color = WuSubtle,
-                            lineHeight = 14.sp
+                            lineHeight = 13.sp
                         )
                         if (noteCount > 0) Spacer(Modifier.width(12.dp))
                     }
@@ -3258,14 +3445,14 @@ private fun ListTaskCard(
                             imageVector = Icons.Outlined.Notes,
                             contentDescription = null,
                             tint = WuSubtle,
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(12.dp)
                         )
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(5.dp))
                         Text(
                             text = "$noteCount",
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             color = WuSubtle,
-                            lineHeight = 14.sp
+                            lineHeight = 13.sp
                         )
                     }
                 }
